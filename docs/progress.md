@@ -28,3 +28,7 @@
 - Token accounting for independent review: unavailable (collaboration tool does not expose exact usage). Root usage also unavailable; no estimates made.
 
 - System authorization follow-up: System Settings showed the old PromptPolish grant on while final process remained untrusted. Removed only that stale entry; user completed OS password verification, then user clicked Open for the exact final app path and enabled its grant. Final native UI now reports 已授权. No grant was enabled by the agent.
+
+- Final live evidence: after user completed the current app grant, native UI reports 已授权. User physically focused the isolated plain-text TextEdit document and ran the no-API probe; app displayed 文本编辑：读取成功 · 控件声明支持直接写回，写入后仍需核对. User confirmed 显示读取成功. This verifies real AX capture only, not an actual provider request or external replace/undo.
+- Temporary TextEdit test document contains only generated generic Chinese/Emoji text; the pre-existing user document was not modified.
+- Final repository kept locally on codex/promptpolish-native; no remote, merge or publication requested.

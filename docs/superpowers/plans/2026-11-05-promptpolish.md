@@ -70,4 +70,4 @@ Files: `Resources/Info.plist`, `scripts/build-app.sh`, `README.md`.
 
 ## Acceptance boundary
 
-Build, packaging, native settings and 29 behavior checks are verified. Live Codex/Cursor and real user-provider API acceptance remain explicitly pending; CUA refuses access to the Codex app itself. After the final ad-hoc signature changed, macOS requires a fresh user-controlled Accessibility grant. No system grant or API credential is changed by the agent.
+Build, packaging, native settings and 29 behavior checks are verified. Live Codex/Cursor and real user-provider API acceptance remain explicitly pending; CUA refuses access to the Codex app itself. After refreshing the old authorization entry, the user granted the exact final bundle. Live TextEdit capture succeeds. The agent did not enable any grant or change API credentials; actual external replacement and provider API acceptance remain pending.
