@@ -43,3 +43,5 @@
 - Actual Codex acceptance remains pending; CUA restriction against operating Codex remains respected. No assertion of a successful real Codex replacement is made from mocked boundary tests.
 
 - Packaged hotfix as 1.0.1 (bundle build 2); final 39 checks and signature verification pass. Restarted app; its initial Keychain read awaits OS confirmation after the ad-hoc identity changed. SecurityAgent automation was explicitly denied; user handoff requested for Keychain/Accessibility refresh and an actual Codex test, without collecting any API key or attempting another path into SecurityAgent/Codex.
+
+- Hotfix startup follow-up: native settings UI visibly shows version 1.0.1 and connection-test success with the existing configuration. No credential value was inspected or changed. Actual user-driven Codex replacement result is still pending.
