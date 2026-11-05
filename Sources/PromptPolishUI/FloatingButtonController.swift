@@ -48,6 +48,9 @@ final class FloatingButtonController {
 
     func showNotice(_ message: String, canUndo: Bool) {
         noticeDismiss?.cancel()
+        noticeDismiss = nil
+        let seconds = canUndo ? min(30, max(0, model.replacementNoticeSeconds)) : 10
+        guard seconds > 0 else { noticePanel.orderOut(nil); return }
         noticePanel.contentView = NSHostingView(rootView: NoticeView(message: message, canUndo: canUndo, undo: { [weak self] in
             self?.noticePanel.orderOut(nil)
             Task { await self?.model.undo() }
@@ -69,7 +72,6 @@ final class FloatingButtonController {
         noticePanel.orderFrontRegardless()
         let dismiss = DispatchWorkItem { [weak self] in self?.noticePanel.orderOut(nil) }
         noticeDismiss = dismiss
-        let seconds = canUndo ? min(30, max(1, model.replacementNoticeSeconds)) : 10
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds), execute: dismiss)
     }
 

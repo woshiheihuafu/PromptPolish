@@ -76,7 +76,7 @@ final class AppModel: ObservableObject {
         floatingPaused = defaults.bool(forKey: "floatingPaused")
         optimizationEnabled = defaults.object(forKey: "optimizationEnabled") == nil ? true : defaults.bool(forKey: "optimizationEnabled")
         quickReplacement = defaults.bool(forKey: "quickReplacement")
-        replacementNoticeSeconds = defaults.object(forKey: "replacementNoticeSeconds") == nil ? 2 : min(30, max(1, defaults.integer(forKey: "replacementNoticeSeconds")))
+        replacementNoticeSeconds = defaults.object(forKey: "replacementNoticeSeconds") == nil ? 2 : min(30, max(0, defaults.integer(forKey: "replacementNoticeSeconds")))
         isTrusted = self.accessibility.isTrusted
         do { hasKey = !(try keychain.load()).isEmpty } catch { settingsMessage = error.localizedDescription }
     }

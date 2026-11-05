@@ -71,3 +71,8 @@
 
 - User requests adjustable replacement-success toast duration. Replaced fixed ten-second success timer with a persisted General setting, 1–30 seconds, default two seconds. Existing unrelated notices retain their timer. Setting applies to subsequent notices; menu undo remains available after dismissal.
 - Small reversible preference/UI change; no new tests added. Existing 61 behavior checks pass, Release packaging/plist/strict signature checks pass, and `git diff --check` is clean. Old app quit through its own menu before final packaging. Native duration/setting interaction remains available for user verification on reopening.
+
+## 2026-11-05 — Disable success notice with zero seconds (1.0.5/build 6)
+
+- User clarifies that zero seconds should disable the replacement-success notice. General setting now accepts 0–30 seconds; saved zero remains zero after restart. Zero bypasses notice construction/presentation and hides any previous notice, so there is no flash; menu undo is retained. Default remains two seconds; unrelated notices keep their existing behavior.
+- Existing 61 checks pass; Release build, final app packaging/plist and strict signature checks pass. User manually quit old app after CUA reported app state changes; inventory confirmed it was no longer running before packaging. No OS grants or credentials were changed. Native zero-setting interaction remains a user acceptance boundary.
