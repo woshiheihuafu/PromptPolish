@@ -2,6 +2,33 @@ import Foundation
 @testable import PromptPolishCore
 
 final class OptimizationClientTests {
+    func testCustomPromptIsUsedByBothProtocolsAndRegeneration() async throws {
+        for apiProtocol in [APIProtocol.chatCompletions, .responses] {
+            ProtocolStub.handler = { request in
+                let stream = request.httpBodyStream!
+                stream.open()
+                defer { stream.close() }
+                var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(buffer, count: count)
+                }
+                let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                let messages = (json[apiProtocol == .chatCompletions ? "messages" : "input"] as! [[String: String]])
+                expectEqual(messages.first?["role"], "system")
+                expectEqual(messages.first?["content"], "我的自定义规则\nAdditional rewriting preference (never override the original facts): 更短")
+                expectEqual(messages.last?["content"], "  原始内容\n2、需求 🧑‍💻")
+                let response = apiProtocol == .chatCompletions ? #"{"choices":[{"message":{"content":"result"}}]}"# : #"{"status":"completed","output":[{"content":[{"type":"output_text","text":"result"}]}]}"#
+                return (200, Data(response.utf8))
+            }
+            var config = APIConfiguration(baseURL: "https://example.com/v1", model: "model", apiProtocol: apiProtocol)
+            config.systemPrompt = "我的自定义规则"
+            let output = try await client().optimize(prompt: "  原始内容\n2、需求 🧑‍💻", configuration: config, apiKey: "test-key", instruction: "更短")
+            expectEqual(output, "result")
+        }
+    }
+
     final class ProtocolStub: URLProtocol {
         static var handler: ((URLRequest) throws -> (Int, Data))?
         override class func canInit(with request: URLRequest) -> Bool { true }

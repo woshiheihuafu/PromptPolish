@@ -70,6 +70,23 @@ struct SettingsView: View {
                     }
                 }
                 Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("优化提示词").font(.callout.weight(.medium))
+                            Spacer()
+                            Button("恢复默认") { model.draftConfiguration.systemPrompt = OptimizationPrompt.defaultSystemPrompt }
+                        }
+                        Text("自定义 AI 如何改写你的 Prompt。保存后用于后续优化，原输入内容会单独提交。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextEditor(text: $model.draftConfiguration.systemPrompt)
+                            .font(.system(size: 13)).padding(6)
+                            .frame(minHeight: 180, maxHeight: 280)
+                            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(.quaternary))
+                            .accessibilityLabel("自定义优化提示词")
+                    }.padding(.vertical, 3)
+                }
+                Section {
                     HStack {
                         if model.isTesting { ProgressView().controlSize(.small) }
                         Text(model.settingsMessage ?? "尚未测试连接").font(.callout).textSelection(.enabled)

@@ -21,12 +21,20 @@ final class AXTextAccessTests {
         var owners: [AXKey: pid_t] = [:]
         var settable = true
         var writes = 0
+        var setterResult: AXError = .success
+        var readErrorAfterWrite: AXError?
         func isRunning(_ application: NSRunningApplication) -> Bool { true }
         func attribute(_ name: String, of element: AXUIElement) -> CFTypeRef? { attributes[AXKey(element)]?[name] }
         func processID(of element: AXUIElement) -> pid_t? { owners[AXKey(element)] }
         func isValueSettable(on element: AXUIElement) -> Bool { settable }
+        func readValue(of element: AXUIElement) throws -> String {
+            if writes > 0, let error = readErrorAfterWrite { throw AXValueFailure.read(error.rawValue) }
+            guard let text = attribute(kAXValueAttribute, of: element) as? String else { throw AccessError.unreadable }
+            return text
+        }
         func setValue(_ value: String, on element: AXUIElement) -> AXError {
             writes += 1
+            guard setterResult == .success else { return setterResult }
             put(kAXValueAttribute, value as CFString, on: element)
             return .success
         }
@@ -70,13 +78,37 @@ final class AXTextAccessTests {
         expectEqual(try fixture.access.read(), "原始 Prompt 🧑‍💻")
     }
 
-    func testPreviewFocusDoesNotInvalidatePinnedField() throws {
+    func testSetterErrorCodeIsPreservedInConfirmationDiagnostic() async {
+        let fixture = Fixture()
+        fixture.runtime.setterResult = .cannotComplete
+        let transaction = TextTransaction(access: fixture.access, original: "原始 Prompt 🧑‍💻")
+        await expectAsyncThrows(try await transaction.replace(with: "result"))
+        if case .setterFailed(let reason) = transaction.confirmationIssue {
+            expectTrue(reason.contains("-25204"), "Keep the AX setter code so messaging failure is distinguishable")
+        } else { fail("Expected setter diagnostic") }
+        expectEqual(transaction.state, .uncertain)
+        expectEqual(fixture.runtime.writes, 1)
+    }
+
+    func testReadErrorCodeIsPreservedAfterSuccessfulSetter() async {
+        let fixture = Fixture()
+        fixture.runtime.readErrorAfterWrite = .cannotComplete
+        let transaction = TextTransaction(access: fixture.access, original: "原始 Prompt 🧑‍💻")
+        await expectAsyncThrows(try await transaction.replace(with: "result"))
+        if case .readFailed(let reason) = transaction.confirmationIssue {
+            expectTrue(reason.contains("-25204"))
+        } else { fail("Expected readback diagnostic") }
+        expectEqual(transaction.state, .uncertain)
+        expectEqual(fixture.runtime.writes, 1)
+    }
+
+    func testPreviewFocusDoesNotInvalidatePinnedField() async throws {
         let fixture = Fixture()
         let transaction = TextTransaction(access: fixture.access, original: "原始 Prompt 🧑‍💻")
         fixture.blurSourceApplication()
-        try transaction.replace(with: "优化后的 Prompt")
+        try await transaction.replace(with: "优化后的 Prompt")
         expectEqual(try fixture.access.read(), "优化后的 Prompt")
-        try transaction.undo()
+        try await transaction.undo()
         expectEqual(try fixture.access.read(), "原始 Prompt 🧑‍💻")
     }
 
@@ -87,12 +119,12 @@ final class AXTextAccessTests {
         expectEqual(try fixture.access.read(), "原始 Prompt 🧑‍💻")
     }
 
-    func testChangedTextStillBlocksWriteAfterPreviewFocus() {
+    func testChangedTextStillBlocksWriteAfterPreviewFocus() async {
         let fixture = Fixture()
         let transaction = TextTransaction(access: fixture.access, original: "原始 Prompt 🧑‍💻")
         fixture.blurSourceApplication()
         fixture.runtime.put(kAXValueAttribute, "用户新增的内容" as CFString, on: fixture.field)
-        expectThrows(try transaction.replace(with: "AI text")) { expectEqual($0 as? TransactionError, .contentChanged) }
+        await expectAsyncThrows(try await transaction.replace(with: "AI text")) { expectEqual($0 as? TransactionError, .contentChanged) }
         expectEqual(fixture.runtime.writes, 0)
     }
 

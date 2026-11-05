@@ -11,7 +11,7 @@ struct PreviewView: View {
                 Image(systemName: "sparkles").font(.title2).foregroundStyle(.tint)
                 Text("优化 Prompt").font(.title2.weight(.semibold))
                 Spacer()
-                if model.isBusy { ProgressView().controlSize(.small) }
+                if model.isBusy || model.isWriting { ProgressView().controlSize(.small) }
             }
             Text("目标：\(model.sessionTarget?.name ?? "原应用") · 触发时的输入框")
                 .font(.callout).foregroundStyle(.secondary)
@@ -30,7 +30,7 @@ struct PreviewView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(message, systemImage: "exclamationmark.triangle").font(.callout)
                     HStack {
-                        Button("优化最新内容") { model.optimizeLatest() }.disabled(model.isBusy)
+                        Button("优化最新内容") { model.optimizeLatest() }.disabled(model.isBusy || model.isWriting)
                         Text("当前输入不会被自动覆盖").font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -67,7 +67,7 @@ struct PreviewView: View {
                             .scrollContentBackground(.hidden).padding(8)
                             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-                            .disabled(model.isBusy)
+                            .disabled(model.isBusy || model.isWriting)
                             .accessibilityLabel("优化后的 Prompt")
                     }
                 }.frame(maxWidth: .infinity)
@@ -75,7 +75,7 @@ struct PreviewView: View {
             Divider()
             HStack(spacing: 12) {
                 Button("重新优化") { showRegenerate = true }
-                    .disabled(!model.optimizationEnabled || model.isBusy || model.original.isEmpty || !model.hasPreview)
+                    .disabled(!model.optimizationEnabled || model.isBusy || model.isWriting || model.original.isEmpty || !model.hasPreview)
                     .popover(isPresented: $showRegenerate) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("重新优化").font(.headline)
@@ -91,10 +91,10 @@ struct PreviewView: View {
                             }
                         }.padding(18).frame(width: 350)
                     }
-                if model.previousResult != nil { Button("上一版本") { model.restorePreviousResult() }.disabled(model.isBusy) }
+                if model.previousResult != nil { Button("上一版本") { model.restorePreviousResult() }.disabled(model.isBusy || model.isWriting) }
                 Spacer()
                 Button("取消") { model.dismissPreview(); model.closePreview() }.keyboardShortcut(.cancelAction)
-                Button("替换原文") { model.replace() }
+                Button(model.isWriting ? "正在确认写回…" : "替换原文") { Task { await model.replace() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent).disabled(!model.canReplace)
             }.controlSize(.large)

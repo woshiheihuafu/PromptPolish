@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasKey = false
     @Published private(set) var isTrusted = false
     @Published private(set) var isBusy = false
+    @Published private(set) var isWriting = false
     @Published private(set) var isTesting = false
     @Published private(set) var detectedTarget: AXTarget?
     @Published private(set) var sessionTarget: AXTarget?
@@ -61,6 +62,7 @@ final class AppModel: ObservableObject {
     private var undoTarget: AXTarget?
     private var replacementBlocked = false
     private var verifiedApplications = Set<pid_t>()
+    private var previewDismissalID = UUID()
 
     init(client: any PromptOptimizing = OptimizationClient(), keychain: any CredentialStoring = KeychainStore(), accessibility: (any AccessibilityProviding)? = nil, defaults: UserDefaults = .standard) {
         self.client = client
@@ -80,12 +82,13 @@ final class AppModel: ObservableObject {
     var settingsDirty: Bool { configuration != draftConfiguration || !draftKey.isEmpty }
     var hasPreview: Bool { transaction != nil }
     var canReplace: Bool {
-        optimizationEnabled && !isBusy && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
+        optimizationEnabled && !isBusy && !isWriting && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
         !(result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && (transaction?.expiresAt ?? .distantPast) > Date()
     }
-    var canUndo: Bool { undoTransaction?.state == .replaced && (undoTransaction?.expiresAt ?? .distantPast) > Date() }
+    var canUndo: Bool { !isWriting && !isBusy && undoTransaction?.state == .replaced && (undoTransaction?.expiresAt ?? .distantPast) > Date() }
     var undoMinutes: Int { max(0, Int((undoTransaction?.expiresAt.timeIntervalSinceNow ?? 0) / 60)) }
     var statusText: String {
+        if isWriting { return "正在确认写回…" }
         if !optimizationEnabled { return "优化已暂停" }
         if isBusy { return "正在优化…" }
         if !isTrusted { return "需要辅助功能权限" }
@@ -100,7 +103,7 @@ final class AppModel: ObservableObject {
         if let sessionTarget, let detectedTarget, detectedTarget.sameField(as: sessionTarget) {
             previewAnchorRect = detectedTarget.rect
         }
-        if let transaction, transaction.expiresAt <= Date() {
+        if !isWriting, let transaction, transaction.expiresAt <= Date() {
             cancelRequest()
             self.transaction = nil; access = nil; sessionTarget = nil
             previewSessionID = nil
@@ -116,6 +119,7 @@ final class AppModel: ObservableObject {
     }
 
     func optimizeFocused() {
+        guard !isWriting else { notify("正在确认上次写回，请稍候。", false); return }
         guard optimizationEnabled else { notify("优化已暂停，请从菜单栏或通用设置中开启。", false); return }
         guard !isBusy else { notify("优化仍在进行，可从预览或菜单栏取消。", false); return }
         do {
@@ -140,7 +144,7 @@ final class AppModel: ObservableObject {
     }
 
     func regenerate(instruction: String) {
-        guard optimizationEnabled, transaction?.state == .ready, !isBusy, !replacementBlocked else { return }
+        guard optimizationEnabled, transaction?.state == .ready, !isBusy, !isWriting, !replacementBlocked else { return }
         do { startRequest(key: try keychain.load(), instruction: instruction, permitsQuickReplace: false) }
         catch { message = error.localizedDescription }
     }
@@ -172,7 +176,7 @@ final class AppModel: ObservableObject {
                 if self.quickReplacement && permitsQuickReplace && self.canReplace,
                    let pid = self.sessionTarget?.application.processIdentifier,
                    self.verifiedApplications.contains(pid) {
-                    self.replace()
+                    await self.replace()
                 } else {
                     if self.quickReplacement && permitsQuickReplace && self.canReplace {
                         self.quickModeNotice = "本次先预览：该应用完成一次成功的确认替换后，本次会话才会启用快速模式。"
@@ -197,6 +201,7 @@ final class AppModel: ObservableObject {
     }
 
     func dismissPreview() {
+        previewDismissalID = UUID()
         cancelRequest()
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { access?.restoreFocus() }
     }
@@ -204,15 +209,20 @@ final class AppModel: ObservableObject {
     func optimizeLatest() { cancelRequest(); optimizeFocused() }
 
     func restorePreviousResult() {
+        guard !isWriting else { return }
         guard let previousResult else { return }
         self.previousResult = result
         result = previousResult
     }
 
-    func replace() {
+    func replace() async {
         guard canReplace, let transaction else { return }
+        isWriting = true
+        let dismissalID = previewDismissalID
+        statusChanged()
+        defer { isWriting = false; statusChanged() }
         do {
-            try transaction.replace(with: result)
+            try await transaction.replace(with: result)
             if let pid = sessionTarget?.application.processIdentifier { verifiedApplications.insert(pid) }
             undoTransaction = transaction; undoAccess = access; undoTarget = sessionTarget
             lastActionLabel = "已替换，未发送"
@@ -222,17 +232,21 @@ final class AppModel: ObservableObject {
             access?.restoreFocus()
             notify("已替换，未发送 · 原文最多临时保留 30 分钟", true)
         } catch {
-            message = error.localizedDescription
+            message = transaction.confirmationIssue?.localizedDescription ?? error.localizedDescription
             replacementBlocked = true
-            showPreview()
+            if dismissalID == previewDismissalID { showPreview() }
         }
         statusChanged()
     }
 
-    func undo() {
-        guard let undoTransaction else { return }
+    func undo() async {
+        guard canUndo, let undoTransaction else { return }
+        isWriting = true
+        let dismissalID = previewDismissalID
+        statusChanged()
+        defer { isWriting = false; statusChanged() }
         do {
-            try undoTransaction.undo()
+            try await undoTransaction.undo()
             lastActionLabel = "已恢复原文"
             successMessage = "已恢复原文"
             undoAccess?.restoreFocus()
@@ -246,8 +260,8 @@ final class AppModel: ObservableObject {
             original = undoTransaction.original; result = undoTransaction.replacement ?? ""
             hasReceivedResult = undoTransaction.replacement != nil
             showComparison = true; replacementBlocked = true
-            message = "撤销已暂停：\(error.localizedDescription)"
-            showPreview()
+            message = "撤销已暂停：\(undoTransaction.confirmationIssue?.localizedDescription ?? error.localizedDescription)"
+            if dismissalID == previewDismissalID { showPreview() }
         }
         statusChanged()
     }

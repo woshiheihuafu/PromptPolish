@@ -1,6 +1,16 @@
 import AppKit
 import ApplicationServices
 
+enum AXValueFailure: LocalizedError, Equatable {
+    case read(Int32), write(Int32)
+    var errorDescription: String? {
+        switch self {
+        case .read(let code): return "AXValue 读取失败（系统错误码 \(code)）。"
+        case .write(let code): return "AXValue 写入失败（系统错误码 \(code)）。"
+        }
+    }
+}
+
 /// The operating-system boundary used by a pinned accessibility text target.
 @MainActor
 protocol AXRuntime {
@@ -12,6 +22,7 @@ protocol AXRuntime {
     func processID(of element: AXUIElement) -> pid_t?
     func isValueSettable(on element: AXUIElement) -> Bool
     func setValue(_ value: String, on element: AXUIElement) -> AXError
+    func readValue(of element: AXUIElement) throws -> String
 }
 
 @MainActor
@@ -35,6 +46,13 @@ struct SystemAXRuntime: AXRuntime {
     }
     func setValue(_ value: String, on element: AXUIElement) -> AXError {
         AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
+    }
+    func readValue(of element: AXUIElement) throws -> String {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+        guard error == .success else { throw AXValueFailure.read(error.rawValue) }
+        guard let text = value as? String else { throw AccessError.unreadable }
+        return text
     }
 }
 

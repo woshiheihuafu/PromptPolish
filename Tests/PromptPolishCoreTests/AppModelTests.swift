@@ -30,8 +30,17 @@ final class AppModelTests {
     final class Field: FocusableTextAccess {
         var text = "原始 Prompt 🧑‍💻"
         var writes = [String]()
-        func read() throws -> String { text }
-        func write(_ text: String) throws { writes.append(text); self.text = text }
+        var staleReadsAfterWrite = 0
+        private var remainingStaleReads = 0
+        private var cached = ""
+        func read() throws -> String {
+            if remainingStaleReads > 0 { remainingStaleReads -= 1; return cached }
+            return text
+        }
+        func write(_ text: String) throws {
+            cached = self.text; remainingStaleReads = staleReadsAfterWrite
+            writes.append(text); self.text = text
+        }
         func restoreFocus() {}
     }
     final class Accessibility: AccessibilityProviding {
@@ -148,10 +157,10 @@ final class AppModelTests {
         expectTrue(fixture.model.canReplace)
         expectTrue(fixture.accessibility.field.writes.isEmpty)
         fixture.model.result = "edited result"
-        fixture.model.replace()
+        await fixture.model.replace()
         expectEqual(fixture.accessibility.field.text, "edited result")
         expectTrue(fixture.model.canUndo)
-        fixture.model.undo()
+        await fixture.model.undo()
         expectEqual(fixture.accessibility.field.text, original)
         expectFalse(fixture.model.canUndo)
     }
@@ -189,7 +198,7 @@ final class AppModelTests {
         await first?.value
         expectTrue(fixture.accessibility.field.writes.isEmpty, "An unverified app must preview before its first write")
         expectEqual(fixture.previews, 1)
-        fixture.model.replace()
+        await fixture.model.replace()
         expectEqual(fixture.accessibility.field.text, "first optimized result")
         fixture.model.optimizeFocused()
         let second = fixture.model.optimizationTask
@@ -232,6 +241,49 @@ final class AppModelTests {
         await fixture.client.waitForRequests(1)
         await fixture.client.complete(1, with: "result")
         await request?.value
+    }
+
+    func testWriteConfirmationBlocksInterleavingAndDoesNotReopenDismissedPreview() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "optimized")
+        await request?.value
+        fixture.accessibility.field.staleReadsAfterWrite = 2
+        let initialSession = fixture.model.previewSessionID
+        let presentations = fixture.previews
+        let write = Task { await fixture.model.replace() }
+        while !fixture.model.isWriting { await Task.yield() }
+        expectFalse(fixture.model.canReplace)
+        expectFalse(fixture.model.canUndo)
+        await fixture.model.replace()
+        fixture.model.optimizeFocused()
+        expectEqual(fixture.model.previewSessionID, initialSession)
+        fixture.model.dismissPreview()
+        fixture.accessibility.field.text = "new edit while checking"
+        await write.value
+        expectEqual(fixture.accessibility.field.text, "new edit while checking")
+        expectEqual(fixture.accessibility.field.writes, ["optimized"])
+        expectEqual(fixture.previews, presentations)
+        expectFalse(fixture.model.isWriting)
+    }
+
+    func testCustomPromptSaveAndDiscardUseExistingSettingsSemantics() {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.draftConfiguration.systemPrompt = "把用户需求改写成简短的开发任务。"
+        expectTrue(fixture.model.settingsDirty)
+        expectTrue(fixture.model.saveConfiguration())
+        let restored = AppModel(client: fixture.client, keychain: Credentials(), accessibility: fixture.accessibility, defaults: fixture.defaults)
+        expectEqual(restored.configuration.systemPrompt, "把用户需求改写成简短的开发任务。")
+        restored.draftConfiguration.systemPrompt = "unsaved preference"
+        restored.discardDraft()
+        expectEqual(restored.draftConfiguration.systemPrompt, "把用户需求改写成简短的开发任务。")
+        restored.draftConfiguration.systemPrompt = " \n"
+        expectFalse(restored.saveConfiguration())
+        expectEqual(restored.configuration.systemPrompt, "把用户需求改写成简短的开发任务。")
     }
 
     private func hasEditor(_ view: NSView) -> Bool {

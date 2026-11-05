@@ -43,13 +43,14 @@ final class FloatingButtonController {
         let size = CGSize(width: expanded ? 118 : 40, height: 32)
         guard let origin = FloatingPlacement.origin(field: rect, visibleFrames: NSScreen.screens.map(\.visibleFrame), size: size) else { buttonPanel.orderOut(nil); return }
         buttonPanel.setFrame(CGRect(origin: origin, size: size), display: true)
-        if !model.isBusy { buttonPanel.orderFrontRegardless() } else { buttonPanel.orderOut(nil) }
+        if !model.isBusy && !model.isWriting { buttonPanel.orderFrontRegardless() } else { buttonPanel.orderOut(nil) }
     }
 
     func showNotice(_ message: String, canUndo: Bool) {
         noticeDismiss?.cancel()
         noticePanel.contentView = NSHostingView(rootView: NoticeView(message: message, canUndo: canUndo, undo: { [weak self] in
-            self?.noticePanel.orderOut(nil); self?.model.undo()
+            self?.noticePanel.orderOut(nil)
+            Task { await self?.model.undo() }
         }, review: { [weak self] in
             guard let self else { return }
             self.noticePanel.orderOut(nil)

@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func updateStatus() {
         guard let statusItem else { return }
-        let symbol = model.isBusy ? "ellipsis.circle" : (!model.isTrusted ? "sparkles.square.filled.on.square" : "sparkles")
+        let symbol = model.isBusy || model.isWriting ? "ellipsis.circle" : (!model.isTrusted ? "sparkles.square.filled.on.square" : "sparkles")
         statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "PromptPolish：\(model.statusText)") ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "PromptPolish")
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = "PromptPolish · \(model.statusText) · ⌘ ⇧ E"
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         item(menu, "PromptPolish", nil, enabled: false)
         item(menu, model.statusText, nil, enabled: false)
         menu.addItem(.separator())
-        let optimize = item(menu, model.isBusy ? "取消正在进行的优化" : "优化当前输入", #selector(optimizeOrCancel), enabled: model.isBusy || (model.optimizationEnabled && model.detectedTarget != nil && model.isTrusted))
+        let optimize = item(menu, model.isBusy ? "取消正在进行的优化" : "优化当前输入", #selector(optimizeOrCancel), enabled: !model.isWriting && (model.isBusy || (model.optimizationEnabled && model.detectedTarget != nil && model.isTrusted)))
         optimize.keyEquivalent = "e"; optimize.keyEquivalentModifierMask = [.command, .shift]
         item(menu, "目标：\(model.detectedTarget?.name ?? "请先点击输入框")", nil, enabled: false)
         item(menu, model.floatingPaused ? "恢复悬浮按钮" : "暂停悬浮按钮", #selector(toggleFloating))
@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func toggleFloating() { model.floatingPaused.toggle(); floating.update() }
     @objc private func toggleEnabled() { model.optimizationEnabled.toggle(); if !model.optimizationEnabled { model.cancelRequest() }; updateStatus() }
     @objc private func showRecent() { model.showRecent() }
-    @objc private func undo() { model.undo() }
+    @objc private func undo() { Task { await model.undo() } }
     @objc private func settings() { openSettings() }
     @objc private func accessSettings() { model.selectedSettings = .access; openSettings() }
     @objc private func quit() { NSApp.terminate(nil) }

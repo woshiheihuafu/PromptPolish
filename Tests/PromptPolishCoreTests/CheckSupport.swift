@@ -27,19 +27,19 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, _ message: Strin
     catch { handler(error) }
 }
 
+@MainActor
+func expectAsyncThrows<T>(_ expression: @autoclosure () async throws -> T, _ message: String = "", file: StaticString = #filePath, line: UInt = #line, _ handler: (Error) -> Void = { _ in }) async {
+    do { _ = try await expression(); fail("Expected error. \(message)", file: file, line: line) }
+    catch { handler(error) }
+}
+
 @main
 struct Checks {
     @MainActor static func main() async {
         let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), previewPlacement = PreviewPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests(), panel = PreviewPanelTests()
         let sync: [(String, () throws -> Void)] = [
-            ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
-            ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
-            ("undo protects new edits", transaction.testUndoRefusesToOverwriteNewEdits),
-            ("partial writes block retry", transaction.testPartialWriteBlocksAutomaticRetryAndUndo),
-            ("mutating setter error is uncertain", transaction.testSetterThatMutatesThenThrowsIsUncertain),
-            ("snapshot expires", transaction.testExpiredSnapshotCannotReplaceOrUndo),
-            ("empty output/missing target never writes", transaction.testEmptyResultAndMissingTargetNeverWrite),
-            ("normalization-only edit is protected", transaction.testUnicodeNormalizationChangeIsStillANewEdit),
+            ("legacy API configuration migration", configuration.testOldConfigurationMigratesWithoutLosingProviderSettings),
+            ("custom prompt save and discard", model.testCustomPromptSaveAndDiscardUseExistingSettingsSemantics),
             ("base URL normalization", configuration.testBuildsEndpointWithoutDuplicatingSlashes),
             ("Responses endpoint", configuration.testResponsesEndpoint),
             ("reject insecure URLs/credentials", configuration.testRejectsInsecureRemoteURLAndEmbeddedCredentials),
@@ -50,9 +50,7 @@ struct Checks {
             ("no room/offscreen hides button", placement.testNoRoomOrOffscreenHidesButton),
             ("secondary display", placement.testNegativeOriginSecondaryDisplay),
             ("original focused AX target reads", ax.testOriginalFocusedTargetCanBeRead),
-            ("preview focus retains exact AX target", ax.testPreviewFocusDoesNotInvalidatePinnedField),
             ("AX focused window is optional", ax.testOptionalFocusedWindowIsNotRequiredWhenExactFieldIsKnown),
-            ("preview blur still protects newer text", ax.testChangedTextStillBlocksWriteAfterPreviewFocus),
             ("AX rejects another focused field", ax.testOtherFocusedFieldIsNeverSubstituted),
             ("AX rejects another focused window", ax.testOtherWindowIsNeverAccepted),
             ("AX rejects changed window membership", ax.testPinnedFieldMovedToOtherWindowIsRejected),
@@ -74,6 +72,25 @@ struct Checks {
             count += 1
         }
         let asyncChecks: [(String, () async throws -> Void)] = [
+            ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
+            ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
+            ("undo protects new edits", transaction.testUndoRefusesToOverwriteNewEdits),
+            ("partial writes block retry", transaction.testPartialWriteBlocksAutomaticRetryAndUndo),
+            ("mutating setter error is uncertain", transaction.testSetterThatMutatesThenThrowsIsUncertain),
+            ("snapshot expires", transaction.testExpiredSnapshotCannotReplaceOrUndo),
+            ("empty output/missing target never writes", transaction.testEmptyResultAndMissingTargetNeverWrite),
+            ("normalization-only edit is protected", transaction.testUnicodeNormalizationChangeIsStillANewEdit),
+            ("preview focus retains exact AX target", ax.testPreviewFocusDoesNotInvalidatePinnedField),
+            ("preview blur still protects newer text", ax.testChangedTextStillBlocksWriteAfterPreviewFocus),
+            ("delayed readback confirms replace and undo", transaction.testDelayedReadbackConfirmsReplaceAndUndoWithoutRepeatingWrite),
+            ("delayed successful write closes popup", panel.testDelayedSuccessfulWriteClosesPopupAndRetainsUndo),
+            ("stale readback has bounded confirmation", transaction.testUnchangedReadbackIsBoundedAndNeverRepeatsWrite),
+            ("unreadable readback diagnosis", transaction.testUnreadableReadbackHasSpecificFailureAndNoRetryWrite),
+            ("readback normalization remains unconfirmed", transaction.testReadbackNormalizationDoesNotBecomeConfirmedSuccess),
+            ("write confirmation prevents interleaving and late popup", model.testWriteConfirmationBlocksInterleavingAndDoesNotReopenDismissedPreview),
+            ("custom system prompt in both APIs", api.testCustomPromptIsUsedByBothProtocolsAndRegeneration),
+            ("AX setter error retains code", ax.testSetterErrorCodeIsPreservedInConfirmationDiagnostic),
+            ("AX readback error retains code", ax.testReadErrorCodeIsPreservedAfterSuccessfulSetter),
             ("Chat Completions real serialization", api.testChatRequestPreservesOriginalAndParsesResult),
             ("Responses parsing", api.testResponsesParsesTextBlocksInOrder),
             ("safe HTTP error", api.testUnauthorizedIsSafeErrorWithoutServiceBody),

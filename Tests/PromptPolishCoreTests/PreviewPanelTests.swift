@@ -3,6 +3,26 @@ import AppKit
 
 @MainActor
 final class PreviewPanelTests {
+    func testDelayedSuccessfulWriteClosesPopupAndRetainsUndo() async {
+        _ = NSApplication.shared
+        let fixture = AppModelTests.Fixture()
+        let presenter = PreviewPanelController(model: fixture.model)
+        defer { presenter.hide(); fixture.clean() }
+        fixture.model.showPreview = { [weak presenter] in presenter?.show(activate: false) }
+        fixture.model.closePreview = { [weak presenter] in presenter?.hide() }
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "complete optimized result")
+        await request?.value
+        fixture.accessibility.field.staleReadsAfterWrite = 2
+        await fixture.model.replace()
+        expectEqual(fixture.accessibility.field.text, "complete optimized result")
+        expectTrue(presenter.panel?.isVisible == false, "A complete write with delayed readback must close the popup")
+        expectTrue(fixture.model.canUndo)
+        expectEqual(fixture.accessibility.field.writes, ["complete optimized result"])
+    }
+
     func testSuccessfulReplaceHidesPopupAndSettingsButKeepsUndo() async {
         _ = NSApplication.shared
         let fixture = AppModelTests.Fixture()
@@ -20,7 +40,7 @@ final class PreviewPanelTests {
         await request?.value
         settings.orderFront(nil)
         expectTrue(settings.isVisible)
-        fixture.model.replace()
+        await fixture.model.replace()
         expectFalse(presenter.panel?.isVisible == true)
         expectFalse(settings.isVisible)
         expectTrue(fixture.model.canUndo)
@@ -40,7 +60,7 @@ final class PreviewPanelTests {
         await fixture.client.complete(1, with: "optimized")
         await request?.value
         fixture.accessibility.field.text = "new edit"
-        fixture.model.replace()
+        await fixture.model.replace()
         expectTrue(presenter.panel?.isVisible == true)
         expectEqual(fixture.accessibility.field.text, "new edit")
         expectEqual(fixture.model.result, "optimized")
