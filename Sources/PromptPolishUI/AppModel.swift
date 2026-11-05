@@ -29,7 +29,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var successMessage: String?
     @Published private(set) var lastActionLabel = "尚无最近操作"
-    @Published var showComparison = false
+    @Published var showComparison = true
+    @Published private(set) var previewSessionID: UUID?
+    @Published private(set) var previewAnchorRect: CGRect?
     @Published var shortcutAvailable = true
     @Published var floatingPaused: Bool { didSet { defaults.set(floatingPaused, forKey: "floatingPaused") } }
     @Published var optimizationEnabled: Bool {
@@ -43,6 +45,7 @@ final class AppModel: ObservableObject {
     var showPreview: () -> Void = {}
     var focusPreview: () -> Void = {}
     var closePreview: () -> Void = {}
+    var replacementSucceeded: () -> Void = {}
     var showSettings: () -> Void = {}
     var closeSettings: () -> Void = {}
     var statusChanged: () -> Void = {}
@@ -94,9 +97,14 @@ final class AppModel: ObservableObject {
         let trusted = accessibility.isTrusted
         if trusted != isTrusted { isTrusted = trusted; statusChanged() }
         detectedTarget = accessibility.refresh()
+        if let sessionTarget, let detectedTarget, detectedTarget.sameField(as: sessionTarget) {
+            previewAnchorRect = detectedTarget.rect
+        }
         if let transaction, transaction.expiresAt <= Date() {
             cancelRequest()
             self.transaction = nil; access = nil; sessionTarget = nil
+            previewSessionID = nil
+            previewAnchorRect = nil
             original = ""; result = ""; previousResult = nil; hasReceivedResult = false
             message = TransactionError.expired.localizedDescription
         }
@@ -109,7 +117,7 @@ final class AppModel: ObservableObject {
 
     func optimizeFocused() {
         guard optimizationEnabled else { notify("优化已暂停，请从菜单栏或通用设置中开启。", false); return }
-        guard !isBusy else { notify("优化仍在进行，可从浮层取消。", false); return }
+        guard !isBusy else { notify("优化仍在进行，可从预览或菜单栏取消。", false); return }
         do {
             let (target, text, access) = try accessibility.capture()
             // Check configuration before discarding an existing preview.
@@ -117,10 +125,12 @@ final class AppModel: ObservableObject {
             let key = try keychain.load()
             guard !key.isEmpty else { throw ConfigurationError.missingKey }
             transaction = TextTransaction(access: access, original: text)
+            previewSessionID = UUID()
             self.access = access; sessionTarget = target
+            previewAnchorRect = target.rect
             original = text; result = ""; previousResult = nil; hasReceivedResult = false
             replacementBlocked = false; message = nil; successMessage = nil; quickModeNotice = nil
-            showComparison = false
+            showComparison = true
             startRequest(key: key, instruction: nil, permitsQuickReplace: true)
         } catch {
             notify(error.localizedDescription, false)
@@ -140,7 +150,10 @@ final class AppModel: ObservableObject {
         let id = UUID(), prompt = original, config = configuration
         requestID = id; isBusy = true; message = nil; successMessage = nil
         let oldResult = result
+        let fastPath = permitsQuickReplace && quickReplacement && sessionTarget.map { verifiedApplications.contains($0.application.processIdentifier) } == true
+        let presentedBeforeResponse = !fastPath
         statusChanged()
+        if presentedBeforeResponse { showPreview() }
         optimizationTask = Task { [weak self, client] in
             do {
                 let output = try await client.optimize(prompt: prompt, configuration: config, apiKey: key, instruction: instruction)
@@ -164,14 +177,15 @@ final class AppModel: ObservableObject {
                     if self.quickReplacement && permitsQuickReplace && self.canReplace {
                         self.quickModeNotice = "本次先预览：该应用完成一次成功的确认替换后，本次会话才会启用快速模式。"
                     }
-                    self.showPreview()
+                    if !presentedBeforeResponse { self.showPreview() }
                 }
                 self.statusChanged()
             } catch {
                 guard let self, !Task.isCancelled, self.requestID == id else { return }
                 self.requestID = nil; self.optimizationTask = nil; self.isBusy = false
                 self.message = self.friendly(error)
-                self.showPreview(); self.statusChanged()
+                if !presentedBeforeResponse { self.showPreview() }
+                self.statusChanged()
             }
         }
     }
@@ -204,6 +218,7 @@ final class AppModel: ObservableObject {
             lastActionLabel = "已替换，未发送"
             successMessage = "已替换，未发送"
             closePreview()
+            replacementSucceeded()
             access?.restoreFocus()
             notify("已替换，未发送 · 原文最多临时保留 30 分钟", true)
         } catch {
@@ -226,6 +241,8 @@ final class AppModel: ObservableObject {
             // Show both snapshots without overwriting any newer edit.
             cancelRequest()
             transaction = undoTransaction; access = undoAccess; sessionTarget = undoTarget
+            previewSessionID = UUID()
+            previewAnchorRect = undoTarget?.rect
             original = undoTransaction.original; result = undoTransaction.replacement ?? ""
             hasReceivedResult = undoTransaction.replacement != nil
             showComparison = true; replacementBlocked = true

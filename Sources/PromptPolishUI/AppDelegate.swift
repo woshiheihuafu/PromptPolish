@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var shortcut: HotKey?
     private var timer: Timer?
     private var settingsWindow: NSWindow?
-    private var previewWindow: NSWindow?
+    private var preview: PreviewPanelController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -31,9 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let menu = NSMenu(); menu.delegate = self; menu.autoenablesItems = false
         statusItem.menu = menu
         floating = FloatingButtonController(model: model)
+        preview = PreviewPanelController(model: model)
         model.showPreview = { [weak self] in self?.openPreview(activate: false) }
         model.focusPreview = { [weak self] in self?.openPreview(activate: true) }
-        model.closePreview = { [weak self] in self?.previewWindow?.orderOut(nil) }
+        model.closePreview = { [weak self] in self?.preview.hide() }
+        model.replacementSucceeded = { [weak self] in
+            guard let self else { return }
+            self.preview.hideAfterReplacement(companion: self.settingsWindow)
+        }
         model.showSettings = { [weak self] in self?.openSettings() }
         model.closeSettings = { [weak self] in self?.settingsWindow?.performClose(nil) }
         model.statusChanged = { [weak self] in self?.updateStatus() }
@@ -43,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         model.shortcutAvailable = shortcut?.register() ?? false
         timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.model.poll(); self?.floating.update() }
+            Task { @MainActor in self?.model.poll(); self?.floating.update(); self?.preview.updateAnchor() }
         }
         model.poll(); updateStatus()
         if !model.isTrusted || !model.hasKey || model.configuration.model.isEmpty {
@@ -118,18 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func openPreview(activate: Bool) {
-        if previewWindow == nil {
-            let window = window(title: "优化 Prompt — PromptPolish", size: NSSize(width: 920, height: 680), minimum: NSSize(width: 720, height: 540))
-            window.contentView = NSHostingView(rootView: PreviewView(model: model))
-            previewWindow = window
-        }
-        if activate || NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
-            previewWindow?.makeKeyAndOrderFront(nil)
-            NSApp.activate()
-        } else {
-            // Completing a background request must not steal keystrokes from the original editor.
-            previewWindow?.orderFrontRegardless()
-        }
+        settingsWindow?.orderOut(nil)
+        preview.show(activate: activate)
     }
 
     private func window(title: String, size: NSSize, minimum: NSSize) -> NSWindow {
@@ -159,7 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window === previewWindow { model.dismissPreview() }
         if window === settingsWindow { model.discardDraft() }
     }
 }

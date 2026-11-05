@@ -100,6 +100,6 @@ struct PreviewView: View {
             }.controlSize(.large)
             Text("只替换输入内容，不发送消息。原文快照最多保留 30 分钟；撤销前会核对是否有新编辑。")
                 .font(.caption).foregroundStyle(.secondary)
-        }.padding(24).frame(minWidth: 720, minHeight: 540)
+        }.padding(20).frame(minWidth: 560, minHeight: 400)
     }
 }

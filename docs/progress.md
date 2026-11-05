@@ -45,3 +45,13 @@
 - Packaged hotfix as 1.0.1 (bundle build 2); final 39 checks and signature verification pass. Restarted app; its initial Keychain read awaits OS confirmation after the ad-hoc identity changed. SecurityAgent automation was explicitly denied; user handoff requested for Keychain/Accessibility refresh and an actual Codex test, without collecting any API key or attempting another path into SecurityAgent/Codex.
 
 - Hotfix startup follow-up: native settings UI visibly shows version 1.0.1 and connection-test success with the existing configuration. No credential value was inspected or changed. Actual user-driven Codex replacement result is still pending.
+
+## 2026-11-05 — Adjacent comparison popup (1.0.2, build 3)
+
+- User confirmed 1.0.1 replacement succeeds in Codex. Repeated Keychain prompts were resolved by the user choosing Always Allow; no credential caching or security-grant change was introduced.
+- Current scope: default comparison, immediate adjacent popup, close prompt/settings UI after successful replacement. User explicitly clarified that optimization rules must remain unchanged; exact existing system prompt documented in `docs/optimization-prompt.md`.
+- Replaced the centered preview window and separate loading bubble with one resizable native NSPanel. Normal requests show original/loading immediately without taking input focus; explicit menu review activates the panel. Successful write/readback hides both popup and settings while preserving undo. Blocked writes retain results; closing loading popup rejects late responses.
+- Geometry prefers available space outside the composer, clamps to its display, and retains the last matching anchor when source focus changes. Independent read-only review found the stale capture-location fallback after cross-display movement; regression reproduced 1 failure in 50 checks, then passed after retaining the matching position.
+- Final behavior verification: 50 checks, 0 failures. Includes actual NSPanel visibility and model lifecycle with controlled input/API boundaries; no user credentials or third-party input were read by tests. Offscreen NSHostingView bitmap exports were incomplete and are not used as visual acceptance evidence.
+- Real Codex 1.0.2 placement/fullscreen/Spaces and provider-backed replacement remain user acceptance items. Existing Codex/SecurityAgent automation restrictions remain respected.
+- Final package: `bash scripts/build-app.sh` completed Release build, Info.plist validation and strict codesign verification for `dist/PromptPolish.app` (1.0.2/build 3). Old app was quit through its own menu before packaging; new app is ready to reopen. No new OS grant was changed or requested by automation.

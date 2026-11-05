@@ -73,6 +73,7 @@ final class AppModelTests {
         defer { fixture.clean() }
         fixture.model.quickReplacement = true
         fixture.model.optimizeFocused()
+        let initialPresentations = fixture.previews
         let request = fixture.model.optimizationTask
         await fixture.client.waitForRequests(1)
         fixture.model.optimizationEnabled = false
@@ -80,7 +81,7 @@ final class AppModelTests {
         await fixture.client.complete(1, with: "late optimized result")
         await request?.value
         expectTrue(fixture.accessibility.field.writes.isEmpty)
-        expectEqual(fixture.previews, 0)
+        expectEqual(fixture.previews, initialPresentations)
         expectEqual(fixture.model.result, "")
     }
 
@@ -88,12 +89,13 @@ final class AppModelTests {
         let fixture = Fixture()
         defer { fixture.clean() }
         fixture.model.optimizeFocused()
+        let initialPresentations = fixture.previews
         let request = fixture.model.optimizationTask
         await fixture.client.waitForRequests(1)
         fixture.model.dismissPreview()
         await fixture.client.complete(1, with: "late result")
         await request?.value
-        expectEqual(fixture.previews, 0)
+        expectEqual(fixture.previews, initialPresentations)
         expectEqual(fixture.model.result, "")
         expectTrue(fixture.accessibility.field.writes.isEmpty)
     }
@@ -115,7 +117,7 @@ final class AppModelTests {
         await oldRequest?.value
         expectEqual(fixture.model.result, "current result")
         expectEqual(fixture.model.original, "new prompt")
-        expectEqual(fixture.previews, 1)
+        expectEqual(fixture.previews, 2)
     }
 
     func testInFlightEditPreventsQuickReplacement() async {
@@ -196,6 +198,40 @@ final class AppModelTests {
         await second?.value
         expectEqual(fixture.accessibility.field.text, "second optimized result")
         expectEqual(fixture.previews, 1)
+    }
+
+    func testNewOptimizationShowsComparisonBeforeResponse() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.showComparison = false
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        expectTrue(fixture.model.showComparison, "Each new optimization opens the comparison tab")
+        expectTrue(fixture.model.isBusy)
+        expectFalse(fixture.model.hasReceivedResult)
+        expectEqual(fixture.previews, 1, "Show the original and loading state immediately")
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "result")
+        await request?.value
+        expectEqual(fixture.previews, 1, "Update the existing popup instead of reopening it")
+    }
+
+    func testPreviewRetainsLastMatchingAnchorWhenFocusChanges() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        let captured = fixture.accessibility.current!
+        let moved = CGRect(x: -1400, y: 400, width: 700, height: 160)
+        fixture.accessibility.current = AXTarget(application: captured.application, element: captured.element, window: captured.window, canWrite: true, rect: moved)
+        fixture.model.poll()
+        expectEqual(fixture.model.previewAnchorRect, moved)
+        fixture.accessibility.current = nil
+        fixture.model.poll()
+        expectEqual(fixture.model.previewAnchorRect, moved, "Losing source focus must not move the popup back to its capture location")
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "result")
+        await request?.value
     }
 
     private func hasEditor(_ view: NSView) -> Bool {

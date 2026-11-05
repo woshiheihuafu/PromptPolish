@@ -30,7 +30,7 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, _ message: Strin
 @main
 struct Checks {
     @MainActor static func main() async {
-        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests()
+        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), previewPlacement = PreviewPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests(), panel = PreviewPanelTests()
         let sync: [(String, () throws -> Void)] = [
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
             ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
@@ -58,7 +58,13 @@ struct Checks {
             ("AX rejects changed window membership", ax.testPinnedFieldMovedToOtherWindowIsRejected),
             ("source foreground requires original focus", ax.testForegroundSourceStillRequiresItsOriginalFocus),
             ("AX rejects unrelated foreground app", ax.testUnrelatedForegroundApplicationBlocksWrite),
-            ("AX rejects invalid and secure handles", ax.testInvalidOrSecurePinnedTargetsAreRejected)
+            ("AX rejects invalid and secure handles", ax.testInvalidOrSecurePinnedTargetsAreRejected),
+            ("preview above bottom composer", previewPlacement.testBottomComposerGetsAdjacentPreviewAbove),
+            ("preview below top composer", previewPlacement.testTopComposerGetsAdjacentPreviewBelow),
+            ("preview shrinks before overlapping", previewPlacement.testShrinksToAvailableSpaceBeforeOverlappingComposer),
+            ("preview uses available side", previewPlacement.testUsesSideWhenNeitherAboveNorBelowFits),
+            ("preview stays on composer display", previewPlacement.testUsesTheComposerDisplayWithNegativeOrigin),
+            ("compact fallback stays on screen", previewPlacement.testNoRoomStillKeepsCompactPopupOnScreen)
         ]
         var count = 0
         for (name, check) in sync {
@@ -79,7 +85,12 @@ struct Checks {
             ("in-flight edits block quick replacement", model.testInFlightEditPreventsQuickReplacement),
             ("native model preview/replace/undo", model.testPreviewReplaceAndUndoThroughNativeModel),
             ("deleting result retains native editor", model.testDeletingResultKeepsNativeTextEditorMounted),
-            ("fast mode requires first manual confirmation", model.testQuickModeRequiresSuccessfulManualReplacementFirst)
+            ("fast mode requires first manual confirmation", model.testQuickModeRequiresSuccessfulManualReplacementFirst),
+            ("comparison appears before response", model.testNewOptimizationShowsComparisonBeforeResponse),
+            ("preview retains last matching source position", model.testPreviewRetainsLastMatchingAnchorWhenFocusChanges),
+            ("successful replacement closes native popup and settings", panel.testSuccessfulReplaceHidesPopupAndSettingsButKeepsUndo),
+            ("blocked replacement keeps popup", panel.testBlockedReplaceKeepsResultPopupOpen),
+            ("closing loading popup cancels request", panel.testClosingLoadingPopupCancelsLateResult)
         ]
         for (name, check) in asyncChecks {
             let before = CheckLog.shared.messages.count
