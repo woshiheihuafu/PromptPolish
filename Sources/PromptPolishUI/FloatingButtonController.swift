@@ -69,7 +69,8 @@ final class FloatingButtonController {
         noticePanel.orderFrontRegardless()
         let dismiss = DispatchWorkItem { [weak self] in self?.noticePanel.orderOut(nil) }
         noticeDismiss = dismiss
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: dismiss)
+        let seconds = canUndo ? min(30, max(1, model.replacementNoticeSeconds)) : 10
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds), execute: dismiss)
     }
 
     private func outsideOrigin(field: CGRect, size: CGSize) -> CGPoint? {

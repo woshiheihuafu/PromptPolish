@@ -124,6 +124,11 @@ struct SettingsView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("隐私与撤销") {
+                Stepper(value: $model.replacementNoticeSeconds, in: 1...30) {
+                    LabeledContent("替换成功提示时长", value: "\(model.replacementNoticeSeconds) 秒")
+                }
+                Text("自动保存，支持 1–30 秒。提示关闭后，仍可从菜单栏撤销上次替换。")
+                    .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("原文保留", value: "内存中最多 30 分钟，退出即清除")
                 Text("不默认保存 Prompt 历史；不使用剪贴板兜底，不模拟全选或发送按键。")
                     .font(.callout).foregroundStyle(.secondary)

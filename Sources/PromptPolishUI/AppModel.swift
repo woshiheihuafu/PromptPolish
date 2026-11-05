@@ -43,6 +43,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var quickReplacement: Bool { didSet { defaults.set(quickReplacement, forKey: "quickReplacement") } }
+    @Published var replacementNoticeSeconds: Int { didSet { defaults.set(replacementNoticeSeconds, forKey: "replacementNoticeSeconds") } }
     var showPreview: () -> Void = {}
     var focusPreview: () -> Void = {}
     var closePreview: () -> Void = {}
@@ -75,6 +76,7 @@ final class AppModel: ObservableObject {
         floatingPaused = defaults.bool(forKey: "floatingPaused")
         optimizationEnabled = defaults.object(forKey: "optimizationEnabled") == nil ? true : defaults.bool(forKey: "optimizationEnabled")
         quickReplacement = defaults.bool(forKey: "quickReplacement")
+        replacementNoticeSeconds = defaults.object(forKey: "replacementNoticeSeconds") == nil ? 2 : min(30, max(1, defaults.integer(forKey: "replacementNoticeSeconds")))
         isTrusted = self.accessibility.isTrusted
         do { hasKey = !(try keychain.load()).isEmpty } catch { settingsMessage = error.localizedDescription }
     }
