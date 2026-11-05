@@ -2,6 +2,12 @@
 
 macOS 菜单栏 Prompt 优化工具，SwiftUI + AppKit，macOS 14+。本地构建、不自动发送消息。
 
+## 下载与安装
+
+在 [Releases](https://github.com/woshiheihuafu/PromptPolish/releases) 下载 DMG 或 ZIP。当前发行包为 **1.0.5 / Apple Silicon（arm64）**；打开 DMG 后将 PromptPolish 拖入 Applications。
+
+发行包使用本地 ad-hoc 签名，尚未进行 Developer ID 签名或 Apple 公证，macOS 可能提示无法验证开发者。首次使用需自行授权辅助功能并配置 AI 服务；安装包不含个人 API Key 或本机配置。内嵌图片处理实验已回退，不包含在本版本中。
+
 ## 运行
 
 ```sh
