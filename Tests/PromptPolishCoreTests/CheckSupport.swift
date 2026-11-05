@@ -37,7 +37,16 @@ func expectAsyncThrows<T>(_ expression: @autoclosure () async throws -> T, _ mes
 struct Checks {
     @MainActor static func main() async {
         let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), previewPlacement = PreviewPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests(), panel = PreviewPanelTests()
+        let attachments = AttachmentDocumentTests()
+        let rich = AXAttachmentAccessTests()
         let sync: [(String, () throws -> Void)] = [
+            ("attachment ranges use UTF16 including newline placeholders", attachments.testUnicodeAndNewlineAttachmentsProduceSafeSegments),
+            ("attachment markers preserve count and order", attachments.testMissingDuplicatedOrReorderedMarkersAreRejected),
+            ("literal image text is not attachment metadata", attachments.testLiteralImageTextIsNotAnAttachmentAndLabelsAvoidCollisions),
+            ("unknown or overlapping attachments are rejected", attachments.testUnmappedOrOverlappingAttachmentRangesAreRejected),
+            ("plain writer rejects inline newline attachment", rich.testPlainWriterRejectsNewInlineAttachmentEvenWhenTextUsesNewline),
+            ("image word and blank lines stay plain text", rich.testLiteralImageAndBlankLinesRemainPlainText),
+            ("truncated object scan stays preview only", rich.testTruncatedAttachmentScanIsPreviewOnly),
             ("legacy API configuration migration", configuration.testOldConfigurationMigratesWithoutLosingProviderSettings),
             ("custom prompt save and discard", model.testCustomPromptSaveAndDiscardUseExistingSettingsSemantics),
             ("base URL normalization", configuration.testBuildsEndpointWithoutDuplicatingSlashes),
@@ -72,6 +81,19 @@ struct Checks {
             count += 1
         }
         let asyncChecks: [(String, () async throws -> Void)] = [
+            ("structured editor with invisible attachments stays preview only", rich.testStructuredOnlyEditorNeverTreatsHiddenImagesAsPlainValue),
+            ("unsupported rich controls do not fall back to whole value", rich.testUnsupportedRangeAndMissingMetadataNeverFallBackToWholeValue),
+            ("inline attachment replacement and undo preserve nodes", rich.testOnlyTextRangesAreReplacedAndUndoPreservesAttachmentIdentity),
+            ("wrong rich selection prevents mutation", rich.testWrongSelectionNeverMutatesTextOrImages),
+            ("changed attachment identity prevents mutation", rich.testChangedAttachmentIdentityBlocksBeforeWriting),
+            ("moved newline attachment stops remaining edits", rich.testMovedNewlineAttachmentStopsRemainingEdits),
+            ("invalid markers reject before mutation", rich.testInvalidOutputMarkersAreRejectedBeforeMutation),
+            ("delayed rich confirmation does not repeat range write", rich.testDelayedRichReadbackDoesNotRepeatRangeWrite),
+            ("mid-write edit blocks retry and rollback", rich.testMidWriteNewEditStopsWithoutRetryOrRollback),
+            ("selection change during snapshot prevents setter", rich.testSelectionChangeDuringSnapshotIsRejectedBeforeSetter),
+            ("dismissal cancels remaining rich writes", model.testDismissalCancelsRemainingRichRangeWrites),
+            ("changed rich source retries latest despite bad markers", model.testChangedRichSourceAndBadMarkersCanRetryLatest),
+            ("rich requests use text markers and always preview", model.testRichRequestUsesMarkersAndAlwaysPreviewsWithRecoverableInvalidOutput),
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
             ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
             ("undo protects new edits", transaction.testUndoRefusesToOverwriteNewEdits),

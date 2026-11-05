@@ -23,6 +23,9 @@ protocol AXRuntime {
     func isValueSettable(on element: AXUIElement) -> Bool
     func setValue(_ value: String, on element: AXUIElement) -> AXError
     func readValue(of element: AXUIElement) throws -> String
+    func attributedText(of element: AXUIElement) -> NSAttributedString?
+    func isAttributeSettable(_ name: String, on element: AXUIElement) -> Bool
+    func setAttribute(_ name: String, value: CFTypeRef, on element: AXUIElement) -> AXError
 }
 
 @MainActor
@@ -54,9 +57,52 @@ struct SystemAXRuntime: AXRuntime {
         guard let text = value as? String else { throw AccessError.unreadable }
         return text
     }
+    func attributedText(of element: AXUIElement) -> NSAttributedString? {
+        let count = (attribute(kAXNumberOfCharactersAttribute, of: element) as? NSNumber)?.intValue
+            ?? (try? readValue(of: element).utf16.count)
+        guard let count, count > 0, count <= 500_000 else { return nil }
+        var range = CFRange(location: 0, length: count)
+        guard let parameter = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXAttributedStringForRangeParameterizedAttribute as CFString, parameter, &value) == .success else { return nil }
+        return value as? NSAttributedString
+    }
+    func isAttributeSettable(_ name: String, on element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(element, name as CFString, &settable) == .success && settable.boolValue
+    }
+    func setAttribute(_ name: String, value: CFTypeRef, on element: AXUIElement) -> AXError {
+        AXUIElementSetAttributeValue(element, name as CFString, value)
+    }
 }
 
 extension AXRuntime {
+    func attributedText(of element: AXUIElement) -> NSAttributedString? { nil }
+    func isAttributeSettable(_ name: String, on element: AXUIElement) -> Bool { false }
+    func setAttribute(_ name: String, value: CFTypeRef, on element: AXUIElement) -> AXError { .attributeUnsupported }
+    func hasInlineObjects(in element: AXUIElement) -> Bool {
+        if let text = attributedText(of: element) {
+            var found = false
+            text.enumerateAttribute(NSAttributedString.Key(kAXAttachmentTextAttribute.takeUnretainedValue() as String), in: NSRange(location: 0, length: text.length)) { value, _, stop in
+                if value != nil { found = true; stop.pointee = true }
+            }
+            if found || text.string.contains("\u{FFFC}") { return true }
+        }
+        // Independent sibling attachments are deliberately outside this scan.
+        var pending: [(AXUIElement, Int)] = [(element, 0)], visited = [AXUIElement]()
+        for _ in 0..<128 {
+            guard let (node, depth) = pending.popLast() else { return false }
+            guard !visited.contains(where: { CFEqual($0, node) }) else { continue }
+            visited.append(node)
+            if depth > 0, string(kAXRoleAttribute, of: node) == kAXImageRole { return true }
+            if let children = attribute(kAXChildrenAttribute, of: node) as? [AXUIElement], !children.isEmpty {
+                // An incomplete scan is unknown, never proof that a whole-value write is safe.
+                guard depth < 4, children.count <= 128 else { return true }
+                pending.append(contentsOf: children.map { ($0, depth + 1) })
+            }
+        }
+        return !pending.isEmpty
+    }
     func string(_ attribute: String, of element: AXUIElement) -> String? {
         self.attribute(attribute, of: element) as? String
     }

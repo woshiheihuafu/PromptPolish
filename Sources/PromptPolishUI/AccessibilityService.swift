@@ -5,6 +5,13 @@ import PromptPolishCore
 @MainActor
 protocol FocusableTextAccess: TextAccess {
     func restoreFocus()
+    var protectedMarkers: [String] { get }
+    var contentNotice: String? { get }
+}
+
+extension FocusableTextAccess {
+    var protectedMarkers: [String] { [] }
+    var contentNotice: String? { nil }
 }
 
 @MainActor
@@ -97,12 +104,7 @@ final class AccessibilityService: AccessibilityProviding {
     func capture() throws -> (AXTarget, String, any FocusableTextAccess) {
         guard isTrusted else { throw AccessError.permission }
         guard let target = refresh() else { throw AccessError.noField }
-        let access = AXTextAccess(target: target)
-        let value = try access.read()
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw OptimizationError.emptyPrompt }
-        guard value.utf8.count <= 200_000 else { throw OptimizationError.tooLarge }
-        guard !value.contains("\u{FFFC}") else { throw AccessError.richText }
-        return (target, value, access)
+        return try AXTextCapture.capture(target: target, runtime: SystemAXRuntime())
     }
 
     private func frame(_ element: AXUIElement) -> CGRect? {
@@ -169,6 +171,7 @@ final class AXTextAccess: FocusableTextAccess {
         try validate()
         guard runtime.isValueSettable(on: target.element) else { throw AccessError.readOnly }
         guard !text.contains("\u{FFFC}") else { throw AccessError.richText }
+        guard !runtime.hasInlineObjects(in: target.element), !(try runtime.readValue(of: target.element)).contains("\u{FFFC}") else { throw AccessError.richText }
         let error = runtime.setValue(text, on: target.element)
         guard error == .success else { throw AXValueFailure.write(error.rawValue) }
     }
