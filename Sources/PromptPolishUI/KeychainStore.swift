@@ -1,7 +1,12 @@
 import Foundation
 import Security
 
-struct KeychainStore {
+protocol CredentialStoring {
+    func load() throws -> String
+    func save(_ value: String) throws
+}
+
+struct KeychainStore: CredentialStoring {
     private let service = "com.kker.PromptPolish.api"
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "api-key"]

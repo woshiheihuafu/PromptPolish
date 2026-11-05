@@ -78,4 +78,22 @@ final class OptimizationClientTests {
             } catch { expectTrue(error is OptimizationError) }
         }
     }
+
+    func testExplicitlyIncompleteResponsesAreRejected() async {
+        for json in [#"{"choices":[{"finish_reason":"length","message":{"content":"partial prompt"}}]}"#, #"{"choices":[{"finish_reason":"content_filter","message":{"content":"partial prompt"}}]}"#] {
+            ProtocolStub.handler = { _ in (200, Data(json.utf8)) }
+            do {
+                _ = try await client().optimize(prompt: "original", configuration: APIConfiguration(baseURL: "https://example.com/v1", model: "model"), apiKey: "test-key", instruction: nil)
+                fail("Explicitly truncated output must not be used")
+            } catch { expectTrue(error is OptimizationError) }
+        }
+        for status in ["incomplete", "failed", "cancelled", "in_progress"] {
+            let body: [String: Any] = ["status": status, "output": [["content": [["type": "output_text", "text": "partial prompt"]]]]]
+            ProtocolStub.handler = { _ in (200, try JSONSerialization.data(withJSONObject: body)) }
+            do {
+                _ = try await client().optimize(prompt: "original", configuration: APIConfiguration(baseURL: "https://example.com/v1", model: "model", apiProtocol: .responses), apiKey: "test-key", instruction: nil)
+                fail("Non-completed Responses status must not be used: \(status)")
+            } catch { expectTrue(error is OptimizationError) }
+        }
+    }
 }

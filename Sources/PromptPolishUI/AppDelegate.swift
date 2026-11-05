@@ -31,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let menu = NSMenu(); menu.delegate = self; menu.autoenablesItems = false
         statusItem.menu = menu
         floating = FloatingButtonController(model: model)
-        model.showPreview = { [weak self] in self?.openPreview() }
+        model.showPreview = { [weak self] in self?.openPreview(activate: false) }
+        model.focusPreview = { [weak self] in self?.openPreview(activate: true) }
         model.closePreview = { [weak self] in self?.previewWindow?.orderOut(nil) }
         model.showSettings = { [weak self] in self?.openSettings() }
         model.closeSettings = { [weak self] in self?.settingsWindow?.performClose(nil) }
@@ -116,14 +117,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         NSApp.activate()
     }
 
-    private func openPreview() {
+    private func openPreview(activate: Bool) {
         if previewWindow == nil {
             let window = window(title: "优化 Prompt — PromptPolish", size: NSSize(width: 920, height: 680), minimum: NSSize(width: 720, height: 540))
             window.contentView = NSHostingView(rootView: PreviewView(model: model))
             previewWindow = window
         }
-        previewWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        if activate || NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            previewWindow?.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+        } else {
+            // Completing a background request must not steal keystrokes from the original editor.
+            previewWindow?.orderFrontRegardless()
+        }
     }
 
     private func window(title: String, size: NSSize, minimum: NSSize) -> NSWindow {

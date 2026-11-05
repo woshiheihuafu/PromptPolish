@@ -2,6 +2,21 @@ import AppKit
 import ApplicationServices
 import PromptPolishCore
 
+@MainActor
+protocol FocusableTextAccess: TextAccess {
+    func restoreFocus()
+}
+
+@MainActor
+protocol AccessibilityProviding {
+    var isTrusted: Bool { get }
+    var current: AXTarget? { get }
+    func requestPermission()
+    func openPermissionSettings()
+    func refresh() -> AXTarget?
+    func capture() throws -> (AXTarget, String, any FocusableTextAccess)
+}
+
 enum AccessError: LocalizedError {
     case permission, noField, secure, unreadable, readOnly, targetChanged, unavailable, richText
     var errorDescription: String? {
@@ -33,7 +48,7 @@ struct AXTarget {
 }
 
 @MainActor
-final class AccessibilityService {
+final class AccessibilityService: AccessibilityProviding {
     private(set) var current: AXTarget?
     var isTrusted: Bool { AXIsProcessTrusted() }
     private let system = AXUIElementCreateSystemWide()
@@ -57,7 +72,7 @@ final class AccessibilityService {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, 0.25)
         guard let focused = axElement(appElement, kAXFocusedUIElementAttribute) ?? axElement(system, kAXFocusedUIElementAttribute),
-              let field = textField(focused),
+              let field = axTextField(focused),
               let window = axElement(field, kAXWindowAttribute),
               let rect = frame(field), rect.width >= 30, rect.height >= 18,
               axString(field, kAXSubroleAttribute) != (kAXSecureTextFieldSubrole as String) else {
@@ -70,7 +85,7 @@ final class AccessibilityService {
         return current
     }
 
-    func capture() throws -> (AXTarget, String, AXTextAccess) {
+    func capture() throws -> (AXTarget, String, any FocusableTextAccess) {
         guard isTrusted else { throw AccessError.permission }
         guard let target = refresh() else { throw AccessError.noField }
         let access = AXTextAccess(target: target)
@@ -79,17 +94,6 @@ final class AccessibilityService {
         guard value.utf8.count <= 200_000 else { throw OptimizationError.tooLarge }
         guard !value.contains("\u{FFFC}") else { throw AccessError.richText }
         return (target, value, access)
-    }
-
-    private func textField(_ focused: AXUIElement) -> AXUIElement? {
-        var candidate: AXUIElement? = focused
-        for _ in 0..<4 {
-            guard let node = candidate else { return nil }
-            let role = axString(node, kAXRoleAttribute)
-            if role == (kAXTextAreaRole as String) || role == (kAXTextFieldRole as String) || role == (kAXComboBoxRole as String) { return node }
-            candidate = axElement(node, kAXParentAttribute)
-        }
-        return nil
     }
 
     private func frame(_ element: AXUIElement) -> CGRect? {
@@ -105,7 +109,7 @@ final class AccessibilityService {
 }
 
 @MainActor
-final class AXTextAccess: TextAccess {
+final class AXTextAccess: FocusableTextAccess {
     let target: AXTarget
     init(target: AXTarget) { self.target = target }
 
@@ -119,7 +123,7 @@ final class AXTextAccess: TextAccess {
         }
         let app = AXUIElementCreateApplication(target.application.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.4)
-        guard let focused = axElement(app, kAXFocusedUIElementAttribute), CFEqual(focused, target.element),
+        guard let focused = axElement(app, kAXFocusedUIElementAttribute), let field = axTextField(focused), CFEqual(field, target.element),
               let window = axElement(app, kAXFocusedWindowAttribute), CFEqual(window, target.window),
               axString(target.element, kAXSubroleAttribute) != (kAXSecureTextFieldSubrole as String) else { throw AccessError.targetChanged }
     }
@@ -161,3 +165,16 @@ private func axElement(_ element: AXUIElement, _ attribute: String) -> AXUIEleme
     guard let value = axValue(element, attribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
+
+@MainActor
+private func axTextField(_ focused: AXUIElement) -> AXUIElement? {
+        var candidate: AXUIElement? = focused
+        for _ in 0..<4 {
+            guard let node = candidate else { return nil }
+            let role = axString(node, kAXRoleAttribute)
+            if role == (kAXTextAreaRole as String) || role == (kAXTextFieldRole as String) || role == (kAXComboBoxRole as String) { return node }
+            candidate = axElement(node, kAXParentAttribute)
+        }
+        return nil
+    }
+

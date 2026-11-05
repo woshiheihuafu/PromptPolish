@@ -5,7 +5,7 @@ public protocol PromptOptimizing: Sendable {
 }
 
 public enum OptimizationError: LocalizedError, Equatable {
-    case httpStatus(Int), invalidResponse, emptyResponse, tooLarge, emptyPrompt
+    case httpStatus(Int), invalidResponse, emptyResponse, tooLarge, emptyPrompt, incompleteResponse
     public var errorDescription: String? {
         switch self {
         case .httpStatus(401), .httpStatus(403): return "API 身份验证失败，请检查 API Key 与访问权限。"
@@ -16,6 +16,7 @@ public enum OptimizationError: LocalizedError, Equatable {
         case .emptyResponse: return "API 未返回可用文本，原文未替换。"
         case .tooLarge: return "文本超出本次可处理范围，请缩短内容后重试。"
         case .emptyPrompt: return "输入框内容为空，请先输入 Prompt。"
+        case .incompleteResponse: return "API 返回的生成结果尚未完整完成，可能受到长度或内容限制。原文未替换，请调整请求后重试。"
         }
     }
 }
@@ -69,9 +70,15 @@ public final class OptimizationClient: PromptOptimizing, @unchecked Sendable {
         switch configuration.apiProtocol {
         case .chatCompletions:
             let choices = object["choices"] as? [[String: Any]]
+            if let reason = choices?.first?["finish_reason"] as? String, reason != "stop" {
+                throw OptimizationError.incompleteResponse
+            }
             let message = choices?.first?["message"] as? [String: Any]
             text = message?["content"] as? String
         case .responses:
+            if let status = object["status"] as? String, status != "completed" { throw OptimizationError.incompleteResponse }
+            if let details = object["incomplete_details"], !(details is NSNull) { throw OptimizationError.incompleteResponse }
+            if let error = object["error"], !(error is NSNull) { throw OptimizationError.invalidResponse }
             let output = object["output"] as? [[String: Any]] ?? []
             text = output.flatMap { $0["content"] as? [[String: Any]] ?? [] }
                 .filter { $0["type"] as? String == "output_text" }

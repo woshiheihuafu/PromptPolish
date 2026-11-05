@@ -38,7 +38,7 @@ public final class TextTransaction {
         guard now < expiresAt else { throw TransactionError.expired }
         guard state == .ready else { throw TransactionError.invalidState }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TransactionError.emptyResult }
-        guard try access.read() == original else { throw TransactionError.contentChanged }
+        guard sameText(try access.read(), original) else { throw TransactionError.contentChanged }
         replacement = text
         try checkedWrite(text, success: .replaced)
     }
@@ -46,7 +46,7 @@ public final class TextTransaction {
     public func undo(now: Date = Date()) throws {
         guard now < expiresAt else { throw TransactionError.expired }
         guard state == .replaced, let replacement else { throw TransactionError.invalidState }
-        guard try access.read() == replacement else { throw TransactionError.contentChanged }
+        guard sameText(try access.read(), replacement) else { throw TransactionError.contentChanged }
         try checkedWrite(original, success: .undone)
     }
 
@@ -55,8 +55,10 @@ public final class TextTransaction {
         state = .uncertain
         do {
             try access.write(value)
-            guard try access.read() == value else { throw TransactionError.writeUnconfirmed }
+            guard sameText(try access.read(), value) else { throw TransactionError.writeUnconfirmed }
             state = success
         } catch { throw TransactionError.writeUnconfirmed }
     }
+
+    private func sameText(_ lhs: String, _ rhs: String) -> Bool { lhs.utf8.elementsEqual(rhs.utf8) }
 }

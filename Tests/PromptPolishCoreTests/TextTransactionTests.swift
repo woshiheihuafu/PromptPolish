@@ -91,4 +91,15 @@ final class TextTransactionTests {
         expectThrows(try transaction.replace(with: "result", now: now))
         expectTrue(field.writes.isEmpty)
     }
+
+    func testUnicodeNormalizationChangeIsStillANewEdit() {
+        let field = Field()
+        field.text = "caf\u{00E9}"
+        let transaction = TextTransaction(access: field, original: field.text, createdAt: now)
+        field.text = "cafe\u{0301}"
+        expectThrows(try transaction.replace(with: "replacement", now: now)) {
+            expectEqual($0 as? TransactionError, .contentChanged)
+        }
+        expectTrue(field.writes.isEmpty)
+    }
 }

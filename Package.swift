@@ -7,8 +7,9 @@ let package = Package(
     products: [.executable(name: "PromptPolish", targets: ["PromptPolish"])],
     targets: [
         .target(name: "PromptPolishCore"),
-        .executableTarget(name: "PromptPolish", dependencies: ["PromptPolishCore"]),
-        .executableTarget(name: "PromptPolishChecks", dependencies: ["PromptPolishCore"], path: "Tests/PromptPolishCoreTests")
+        .target(name: "PromptPolishUI", dependencies: ["PromptPolishCore"]),
+        .executableTarget(name: "PromptPolish", dependencies: ["PromptPolishUI"]),
+        .executableTarget(name: "PromptPolishChecks", dependencies: ["PromptPolishCore", "PromptPolishUI"], path: "Tests/PromptPolishCoreTests")
     ],
     swiftLanguageModes: [.v5]
 )

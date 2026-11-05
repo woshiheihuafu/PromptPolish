@@ -5,10 +5,10 @@ import PromptPolishCore
 @MainActor
 final class AppModel: ObservableObject {
     enum SettingsPage: String, CaseIterable { case general = "通用", api = "AI 服务", access = "权限与兼容性", shortcuts = "快捷键" }
-    let accessibility = AccessibilityService()
-    private let client: any PromptOptimizing = OptimizationClient()
-    private let keychain = KeychainStore()
-    private let defaults = UserDefaults.standard
+    let accessibility: any AccessibilityProviding
+    private let client: any PromptOptimizing
+    private let keychain: any CredentialStoring
+    private let defaults: UserDefaults
     @Published private(set) var configuration: APIConfiguration
     @Published var draftConfiguration: APIConfiguration
     @Published var draftKey = ""
@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var sessionTarget: AXTarget?
     @Published private(set) var original = ""
     @Published var result = ""
+    @Published private(set) var hasReceivedResult = false
+    @Published private(set) var quickModeNotice: String?
     @Published private(set) var previousResult: String?
     @Published private(set) var message: String?
     @Published private(set) var successMessage: String?
@@ -30,40 +32,52 @@ final class AppModel: ObservableObject {
     @Published var showComparison = false
     @Published var shortcutAvailable = true
     @Published var floatingPaused: Bool { didSet { defaults.set(floatingPaused, forKey: "floatingPaused") } }
-    @Published var optimizationEnabled: Bool { didSet { defaults.set(optimizationEnabled, forKey: "optimizationEnabled") } }
+    @Published var optimizationEnabled: Bool {
+        didSet {
+            defaults.set(optimizationEnabled, forKey: "optimizationEnabled")
+            if !optimizationEnabled { cancelRequest() }
+            statusChanged()
+        }
+    }
     @Published var quickReplacement: Bool { didSet { defaults.set(quickReplacement, forKey: "quickReplacement") } }
     var showPreview: () -> Void = {}
+    var focusPreview: () -> Void = {}
     var closePreview: () -> Void = {}
     var showSettings: () -> Void = {}
     var closeSettings: () -> Void = {}
     var statusChanged: () -> Void = {}
     var notify: (String, Bool) -> Void = { _, _ in }
-    private var task: Task<Void, Never>?
+    private(set) var optimizationTask: Task<Void, Never>?
     private var testTask: Task<Void, Never>?
     private var requestID: UUID?
     private var testID: UUID?
     private var transaction: TextTransaction?
-    private var access: AXTextAccess?
+    private var access: (any FocusableTextAccess)?
     private var undoTransaction: TextTransaction?
-    private var undoAccess: AXTextAccess?
+    private var undoAccess: (any FocusableTextAccess)?
     private var undoTarget: AXTarget?
     private var replacementBlocked = false
+    private var verifiedApplications = Set<pid_t>()
 
-    init() {
+    init(client: any PromptOptimizing = OptimizationClient(), keychain: any CredentialStoring = KeychainStore(), accessibility: (any AccessibilityProviding)? = nil, defaults: UserDefaults = .standard) {
+        self.client = client
+        self.keychain = keychain
+        self.accessibility = accessibility ?? AccessibilityService()
+        self.defaults = defaults
         let saved = defaults.data(forKey: "apiConfiguration").flatMap { try? JSONDecoder().decode(APIConfiguration.self, from: $0) } ?? APIConfiguration()
         configuration = saved
         draftConfiguration = saved
         floatingPaused = defaults.bool(forKey: "floatingPaused")
         optimizationEnabled = defaults.object(forKey: "optimizationEnabled") == nil ? true : defaults.bool(forKey: "optimizationEnabled")
         quickReplacement = defaults.bool(forKey: "quickReplacement")
-        isTrusted = accessibility.isTrusted
+        isTrusted = self.accessibility.isTrusted
         do { hasKey = !(try keychain.load()).isEmpty } catch { settingsMessage = error.localizedDescription }
     }
 
     var settingsDirty: Bool { configuration != draftConfiguration || !draftKey.isEmpty }
     var hasPreview: Bool { transaction != nil }
     var canReplace: Bool {
-        !isBusy && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
+        optimizationEnabled && !isBusy && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
         !(result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && (transaction?.expiresAt ?? .distantPast) > Date()
     }
     var canUndo: Bool { undoTransaction?.state == .replaced && (undoTransaction?.expiresAt ?? .distantPast) > Date() }
@@ -83,7 +97,7 @@ final class AppModel: ObservableObject {
         if let transaction, transaction.expiresAt <= Date() {
             cancelRequest()
             self.transaction = nil; access = nil; sessionTarget = nil
-            original = ""; result = ""; previousResult = nil
+            original = ""; result = ""; previousResult = nil; hasReceivedResult = false
             message = TransactionError.expired.localizedDescription
         }
         if let undoTransaction, undoTransaction.expiresAt <= Date() {
@@ -104,8 +118,8 @@ final class AppModel: ObservableObject {
             guard !key.isEmpty else { throw ConfigurationError.missingKey }
             transaction = TextTransaction(access: access, original: text)
             self.access = access; sessionTarget = target
-            original = text; result = ""; previousResult = nil
-            replacementBlocked = false; message = nil; successMessage = nil
+            original = text; result = ""; previousResult = nil; hasReceivedResult = false
+            replacementBlocked = false; message = nil; successMessage = nil; quickModeNotice = nil
             showComparison = false
             startRequest(key: key, instruction: nil, permitsQuickReplace: true)
         } catch {
@@ -116,7 +130,7 @@ final class AppModel: ObservableObject {
     }
 
     func regenerate(instruction: String) {
-        guard transaction?.state == .ready, !isBusy, !replacementBlocked else { return }
+        guard optimizationEnabled, transaction?.state == .ready, !isBusy, !replacementBlocked else { return }
         do { startRequest(key: try keychain.load(), instruction: instruction, permitsQuickReplace: false) }
         catch { message = error.localizedDescription }
     }
@@ -127,26 +141,35 @@ final class AppModel: ObservableObject {
         requestID = id; isBusy = true; message = nil; successMessage = nil
         let oldResult = result
         statusChanged()
-        task = Task { [weak self, client] in
+        optimizationTask = Task { [weak self, client] in
             do {
                 let output = try await client.optimize(prompt: prompt, configuration: config, apiKey: key, instruction: instruction)
-                guard let self, !Task.isCancelled, self.requestID == id else { return }
-                self.requestID = nil; self.isBusy = false; self.task = nil
+                guard let self, !Task.isCancelled, self.requestID == id, self.optimizationEnabled else { return }
+                self.requestID = nil; self.isBusy = false; self.optimizationTask = nil
                 if !oldResult.isEmpty { self.previousResult = oldResult }
                 self.result = output
+                self.hasReceivedResult = true
                 // The original may have changed while the request was in flight.
                 do {
-                    guard try self.access?.read() == self.original else { throw TransactionError.contentChanged }
+                    guard let current = try self.access?.read(), current.utf8.elementsEqual(self.original.utf8) else { throw TransactionError.contentChanged }
                 } catch {
                     self.replacementBlocked = true
                     self.message = error.localizedDescription
                 }
-                if self.quickReplacement && permitsQuickReplace && self.canReplace { self.replace() }
-                else { self.showPreview() }
+                if self.quickReplacement && permitsQuickReplace && self.canReplace,
+                   let pid = self.sessionTarget?.application.processIdentifier,
+                   self.verifiedApplications.contains(pid) {
+                    self.replace()
+                } else {
+                    if self.quickReplacement && permitsQuickReplace && self.canReplace {
+                        self.quickModeNotice = "本次先预览：该应用完成一次成功的确认替换后，本次会话才会启用快速模式。"
+                    }
+                    self.showPreview()
+                }
                 self.statusChanged()
             } catch {
                 guard let self, !Task.isCancelled, self.requestID == id else { return }
-                self.requestID = nil; self.task = nil; self.isBusy = false
+                self.requestID = nil; self.optimizationTask = nil; self.isBusy = false
                 self.message = self.friendly(error)
                 self.showPreview(); self.statusChanged()
             }
@@ -155,7 +178,7 @@ final class AppModel: ObservableObject {
 
     func cancelRequest() {
         requestID = nil
-        task?.cancel(); task = nil; isBusy = false
+        optimizationTask?.cancel(); optimizationTask = nil; isBusy = false
         statusChanged()
     }
 
@@ -176,12 +199,13 @@ final class AppModel: ObservableObject {
         guard canReplace, let transaction else { return }
         do {
             try transaction.replace(with: result)
+            if let pid = sessionTarget?.application.processIdentifier { verifiedApplications.insert(pid) }
             undoTransaction = transaction; undoAccess = access; undoTarget = sessionTarget
             lastActionLabel = "已替换，未发送"
             successMessage = "已替换，未发送"
             closePreview()
             access?.restoreFocus()
-            notify("已替换，未发送 · 原文临时保留 30 分钟", true)
+            notify("已替换，未发送 · 原文最多临时保留 30 分钟", true)
         } catch {
             message = error.localizedDescription
             replacementBlocked = true
@@ -203,6 +227,7 @@ final class AppModel: ObservableObject {
             cancelRequest()
             transaction = undoTransaction; access = undoAccess; sessionTarget = undoTarget
             original = undoTransaction.original; result = undoTransaction.replacement ?? ""
+            hasReceivedResult = undoTransaction.replacement != nil
             showComparison = true; replacementBlocked = true
             message = "撤销已暂停：\(error.localizedDescription)"
             showPreview()
@@ -210,7 +235,7 @@ final class AppModel: ObservableObject {
         statusChanged()
     }
 
-    func showRecent() { if hasPreview { showPreview() } }
+    func showRecent() { if hasPreview { focusPreview() } }
 
     func probeTarget() {
         do {

@@ -30,7 +30,7 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, _ message: Strin
 @main
 struct Checks {
     @MainActor static func main() async {
-        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), api = OptimizationClientTests()
+        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), api = OptimizationClientTests(), model = AppModelTests()
         let sync: [(String, () throws -> Void)] = [
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
             ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
@@ -39,6 +39,7 @@ struct Checks {
             ("mutating setter error is uncertain", transaction.testSetterThatMutatesThenThrowsIsUncertain),
             ("snapshot expires", transaction.testExpiredSnapshotCannotReplaceOrUndo),
             ("empty output/missing target never writes", transaction.testEmptyResultAndMissingTargetNeverWrite),
+            ("normalization-only edit is protected", transaction.testUnicodeNormalizationChangeIsStillANewEdit),
             ("base URL normalization", configuration.testBuildsEndpointWithoutDuplicatingSlashes),
             ("Responses endpoint", configuration.testResponsesEndpoint),
             ("reject insecure URLs/credentials", configuration.testRejectsInsecureRemoteURLAndEmbeddedCredentials),
@@ -60,7 +61,15 @@ struct Checks {
             ("Chat Completions real serialization", api.testChatRequestPreservesOriginalAndParsesResult),
             ("Responses parsing", api.testResponsesParsesTextBlocksInOrder),
             ("safe HTTP error", api.testUnauthorizedIsSafeErrorWithoutServiceBody),
-            ("reject empty/malformed output", api.testEmptyAndMalformedResultsNeverBecomeReplacement)
+            ("reject empty/malformed output", api.testEmptyAndMalformedResultsNeverBecomeReplacement),
+            ("reject incomplete provider output", api.testExplicitlyIncompleteResponsesAreRejected),
+            ("settings pause blocks late quick replacement", model.testSettingsPauseCancelsAndRejectsLateQuickReplacement),
+            ("dismiss cancels late preview", model.testDismissedRequestCannotReopenPreview),
+            ("obsolete request cannot replace newer result", model.testOlderRequestCannotReplaceNewerResult),
+            ("in-flight edits block quick replacement", model.testInFlightEditPreventsQuickReplacement),
+            ("native model preview/replace/undo", model.testPreviewReplaceAndUndoThroughNativeModel),
+            ("deleting result retains native editor", model.testDeletingResultKeepsNativeTextEditorMounted),
+            ("fast mode requires first manual confirmation", model.testQuickModeRequiresSuccessfulManualReplacementFirst)
         ]
         for (name, check) in asyncChecks {
             let before = CheckLog.shared.messages.count

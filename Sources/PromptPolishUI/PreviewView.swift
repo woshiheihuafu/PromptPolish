@@ -37,6 +37,9 @@ struct PreviewView: View {
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
             }
+            if let notice = model.quickModeNotice {
+                Label(notice, systemImage: "checkmark.shield").font(.callout).foregroundStyle(.secondary)
+            }
             HStack(alignment: .top, spacing: 16) {
                 if model.showComparison {
                     VStack(alignment: .leading, spacing: 8) {
@@ -52,7 +55,7 @@ struct PreviewView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.isBusy ? "正在优化…" : "优化后").font(.callout.weight(.medium)).foregroundStyle(.secondary)
-                    if model.result.isEmpty {
+                    if !model.hasReceivedResult {
                         VStack(spacing: 12) {
                             if model.isBusy { ProgressView() } else { Image(systemName: "text.alignleft").font(.largeTitle).foregroundStyle(.tertiary) }
                             Text(model.isBusy ? "正在调用你配置的 AI 服务" : "尚未收到可用结果").foregroundStyle(.secondary)
@@ -72,7 +75,7 @@ struct PreviewView: View {
             Divider()
             HStack(spacing: 12) {
                 Button("重新优化") { showRegenerate = true }
-                    .disabled(model.isBusy || model.original.isEmpty || !model.hasPreview)
+                    .disabled(!model.optimizationEnabled || model.isBusy || model.original.isEmpty || !model.hasPreview)
                     .popover(isPresented: $showRegenerate) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("重新优化").font(.headline)

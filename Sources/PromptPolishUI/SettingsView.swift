@@ -49,7 +49,7 @@ struct SettingsView: View {
                             Group {
                                 if showKey { TextField(keyPlaceholder, text: $model.draftKey) }
                                 else { SecureField(keyPlaceholder, text: $model.draftKey) }
-                            }.textFieldStyle(.roundedBorder)
+                            }.textFieldStyle(.roundedBorder).labelsHidden()
                             Button { showKey.toggle() } label: { Image(systemName: showKey ? "eye.slash" : "eye") }
                                 .buttonStyle(.borderless).help(showKey ? "隐藏密钥" : "显示本次输入的密钥")
                         }
@@ -57,12 +57,12 @@ struct SettingsView: View {
                     }.padding(.vertical, 3)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Base URL").font(.callout.weight(.medium))
-                        TextField("https://api.example.com/v1", text: $model.draftConfiguration.baseURL).textFieldStyle(.roundedBorder)
+                        TextField("https://api.example.com/v1", text: $model.draftConfiguration.baseURL).textFieldStyle(.roundedBorder).labelsHidden()
                         Text("填写 API 根路径，不包含 chat/completions 或 responses。").font(.caption).foregroundStyle(.secondary)
                     }.padding(.vertical, 3)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("模型 ID").font(.callout.weight(.medium))
-                        TextField("输入服务商提供的完整模型 ID", text: $model.draftConfiguration.model).textFieldStyle(.roundedBorder)
+                        TextField("输入服务商提供的完整模型 ID", text: $model.draftConfiguration.model).textFieldStyle(.roundedBorder).labelsHidden()
                     }.padding(.vertical, 3)
                     Picker("API 协议", selection: $model.draftConfiguration.apiProtocol) {
                         ForEach(PromptPolishCore.APIProtocol.allCases, id: \.self) { item in Text(item.title).tag(item) }
@@ -102,7 +102,7 @@ struct SettingsView: View {
                 Toggle("优化完成后快速替换", isOn: Binding(get: { model.quickReplacement }, set: { value in
                     if value { confirmQuick = true } else { model.quickReplacement = false }
                 }))
-                Text("默认先预览后替换。快速模式跳过预览，但始终不发送消息；原文或目标变化时会暂停替换。")
+                Text("默认先预览后替换。每个应用在本次会话完成一次成功的确认替换后，快速模式才会跳过预览；始终不发送消息，原文或目标变化时暂停替换。")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("隐私与撤销") {
