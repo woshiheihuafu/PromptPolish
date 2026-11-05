@@ -3,12 +3,7 @@ import Foundation
 @MainActor
 public protocol TextAccess: AnyObject {
     func read() throws -> String
-    func write(_ text: String) async throws
-    func validateReplacement(_ text: String) throws
-}
-
-public extension TextAccess {
-    func validateReplacement(_ text: String) throws {}
+    func write(_ text: String) throws
 }
 
 public enum TransactionError: LocalizedError, Equatable {
@@ -55,18 +50,15 @@ public final class TextTransaction {
     }
 
     public func replace(with text: String, now: Date = Date()) async throws {
-        try Task.checkCancellation()
         guard now < expiresAt else { throw TransactionError.expired }
         guard state == .ready else { throw TransactionError.invalidState }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TransactionError.emptyResult }
-        try access.validateReplacement(text)
         guard sameText(try access.read(), original) else { throw TransactionError.contentChanged }
         replacement = text
         try await checkedWrite(text, previous: original, success: .replaced)
     }
 
     public func undo(now: Date = Date()) async throws {
-        try Task.checkCancellation()
         guard now < expiresAt else { throw TransactionError.expired }
         guard state == .replaced, let replacement else { throw TransactionError.invalidState }
         guard sameText(try access.read(), replacement) else { throw TransactionError.contentChanged }
@@ -74,11 +66,10 @@ public final class TextTransaction {
     }
 
     private func checkedWrite(_ value: String, previous: String, success: State) async throws {
-        try Task.checkCancellation()
         // A setter may mutate before throwing. Never retry or silently roll back an uncertain write.
         state = .uncertain
         confirmationIssue = nil
-        do { try await access.write(value) }
+        do { try access.write(value) }
         catch {
             confirmationIssue = .setterFailed(error.localizedDescription)
             throw TransactionError.writeUnconfirmed

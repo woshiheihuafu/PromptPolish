@@ -53,7 +53,6 @@ final class AppModel: ObservableObject {
     var statusChanged: () -> Void = {}
     var notify: (String, Bool) -> Void = { _, _ in }
     private(set) var optimizationTask: Task<Void, Never>?
-    private var writeTask: Task<Void, Error>?
     private var testTask: Task<Void, Never>?
     private var requestID: UUID?
     private var testID: UUID?
@@ -84,16 +83,9 @@ final class AppModel: ObservableObject {
 
     var settingsDirty: Bool { configuration != draftConfiguration || !draftKey.isEmpty }
     var hasPreview: Bool { transaction != nil }
-    var contentNotice: String? { access?.contentNotice }
-    var resultValidationMessage: String? {
-        guard hasReceivedResult else { return nil }
-        do { try access?.validateReplacement(result); return nil }
-        catch { return error.localizedDescription }
-    }
-    var retryUsesOriginal: Bool { message == nil && resultValidationMessage != nil }
     var canReplace: Bool {
         optimizationEnabled && !isBusy && !isWriting && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
-        !(result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && resultValidationMessage == nil && (transaction?.expiresAt ?? .distantPast) > Date()
+        !(result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && (transaction?.expiresAt ?? .distantPast) > Date()
     }
     var canUndo: Bool { !isWriting && !isBusy && undoTransaction?.state == .replaced && (undoTransaction?.expiresAt ?? .distantPast) > Date() }
     var undoMinutes: Int { max(0, Int((undoTransaction?.expiresAt.timeIntervalSinceNow ?? 0) / 60)) }
@@ -161,16 +153,10 @@ final class AppModel: ObservableObject {
 
     private func startRequest(key: String, instruction: String?, permitsQuickReplace: Bool) {
         cancelRequest()
-        let id = UUID(), prompt = original
-        var config = configuration
-        let markers = access?.protectedMarkers ?? []
-        let allowQuickReplace = permitsQuickReplace && markers.isEmpty
-        if !markers.isEmpty {
-            config.systemPrompt += "\nPreserve attachment markers: \(markers.joined(separator: ", ")). These labels represent existing inline attachments, not image content. Copy every marker exactly once in the same order, in its corresponding text position. Rewrite only the surrounding text; do not describe or infer attachment contents."
-        }
+        let id = UUID(), prompt = original, config = configuration
         requestID = id; isBusy = true; message = nil; successMessage = nil
         let oldResult = result
-        let fastPath = allowQuickReplace && quickReplacement && sessionTarget?.canWrite == true && sessionTarget.map { verifiedApplications.contains($0.application.processIdentifier) } == true
+        let fastPath = permitsQuickReplace && quickReplacement && sessionTarget.map { verifiedApplications.contains($0.application.processIdentifier) } == true
         let presentedBeforeResponse = !fastPath
         statusChanged()
         if presentedBeforeResponse { showPreview() }
@@ -189,12 +175,12 @@ final class AppModel: ObservableObject {
                     self.replacementBlocked = true
                     self.message = error.localizedDescription
                 }
-                if self.quickReplacement && allowQuickReplace && self.canReplace,
+                if self.quickReplacement && permitsQuickReplace && self.canReplace,
                    let pid = self.sessionTarget?.application.processIdentifier,
                    self.verifiedApplications.contains(pid) {
                     await self.replace()
                 } else {
-                    if self.quickReplacement && allowQuickReplace && self.canReplace {
+                    if self.quickReplacement && permitsQuickReplace && self.canReplace {
                         self.quickModeNotice = "本次先预览：该应用完成一次成功的确认替换后，本次会话才会启用快速模式。"
                     }
                     if !presentedBeforeResponse { self.showPreview() }
@@ -211,7 +197,6 @@ final class AppModel: ObservableObject {
     }
 
     func cancelRequest() {
-        writeTask?.cancel()
         requestID = nil
         optimizationTask?.cancel(); optimizationTask = nil; isBusy = false
         statusChanged()
@@ -225,11 +210,6 @@ final class AppModel: ObservableObject {
 
     func optimizeLatest() { cancelRequest(); optimizeFocused() }
 
-    func retryPreview() {
-        if retryUsesOriginal { regenerate(instruction: "") }
-        else { optimizeLatest() }
-    }
-
     func restorePreviousResult() {
         guard !isWriting else { return }
         guard let previousResult else { return }
@@ -241,13 +221,10 @@ final class AppModel: ObservableObject {
         guard canReplace, let transaction else { return }
         isWriting = true
         let dismissalID = previewDismissalID
-        let replacement = result
-        let operation = Task { try await transaction.replace(with: replacement) }
-        writeTask = operation
         statusChanged()
-        defer { writeTask = nil; isWriting = false; statusChanged() }
+        defer { isWriting = false; statusChanged() }
         do {
-            try await operation.value
+            try await transaction.replace(with: result)
             if let pid = sessionTarget?.application.processIdentifier { verifiedApplications.insert(pid) }
             undoTransaction = transaction; undoAccess = access; undoTarget = sessionTarget
             lastActionLabel = "已替换，未发送"
@@ -268,12 +245,10 @@ final class AppModel: ObservableObject {
         guard canUndo, let undoTransaction else { return }
         isWriting = true
         let dismissalID = previewDismissalID
-        let operation = Task { try await undoTransaction.undo() }
-        writeTask = operation
         statusChanged()
-        defer { writeTask = nil; isWriting = false; statusChanged() }
+        defer { isWriting = false; statusChanged() }
         do {
-            try await operation.value
+            try await undoTransaction.undo()
             lastActionLabel = "已恢复原文"
             successMessage = "已恢复原文"
             undoAccess?.restoreFocus()
@@ -297,9 +272,8 @@ final class AppModel: ObservableObject {
 
     func probeTarget() {
         do {
-            let (target, _, access) = try accessibility.capture()
-            let mode = target.canWrite ? (access.protectedMarkers.isEmpty ? "控件声明支持直接写回，写入后仍需核对" : "支持局部文字写回 · 已识别 \(access.protectedMarkers.count) 个附件，写入后仍需核对") : "仅可预览，替换不可用"
-            capabilityMessage = "\(target.name)：读取成功 · \(mode)\(access.contentNotice.map { "\n" + $0 } ?? "")"
+            let (target, _, _) = try accessibility.capture()
+            capabilityMessage = "\(target.name)：读取成功 · \(target.canWrite ? "控件声明支持直接写回，写入后仍需核对" : "仅可预览，替换不可用")"
         } catch { capabilityMessage = error.localizedDescription }
     }
 

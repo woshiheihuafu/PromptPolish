@@ -26,15 +26,11 @@ struct PreviewView: View {
                         .font(.caption).foregroundStyle(model.sessionTarget?.canWrite == true ? Color.secondary : Color.orange)
                 }
             }
-            if let notice = model.contentNotice {
-                Label(notice, systemImage: "photo.on.rectangle").font(.caption).foregroundStyle(.secondary)
-            }
-            if let message = model.message ?? model.resultValidationMessage {
+            if let message = model.message {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(message, systemImage: "exclamationmark.triangle").font(.callout)
                     HStack {
-                        Button(model.retryUsesOriginal ? "重新优化" : "优化最新内容") { model.retryPreview() }
-                            .disabled(model.isBusy || model.isWriting)
+                        Button("优化最新内容") { model.optimizeLatest() }.disabled(model.isBusy || model.isWriting)
                         Text("当前输入不会被自动覆盖").font(.caption).foregroundStyle(.secondary)
                     }
                 }

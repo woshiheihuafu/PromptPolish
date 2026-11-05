@@ -5,14 +5,11 @@ import ApplicationServices
 @testable import PromptPolishUI
 
 actor ControlledOptimizer: PromptOptimizing {
-    private(set) var lastPrompt: String?
-    private(set) var lastConfiguration: APIConfiguration?
     private var count = 0
     private var pending: [Int: CheckedContinuation<String, Error>] = [:]
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
     func optimize(prompt: String, configuration: APIConfiguration, apiKey: String, instruction: String?) async throws -> String {
-        lastPrompt = prompt; lastConfiguration = configuration
-        return try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { continuation in
             count += 1
             pending[count] = continuation
             let ready = waiters.filter { $0.0 <= count }
@@ -50,7 +47,6 @@ final class AppModelTests {
         let field = Field()
         var isTrusted = true
         var current: AXTarget?
-        var overrideAccess: (any FocusableTextAccess)?
         init() {
             let element = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
             current = AXTarget(application: .current, element: element, window: element, canWrite: true, rect: CGRect(x: 10, y: 10, width: 300, height: 100))
@@ -58,10 +54,7 @@ final class AppModelTests {
         func requestPermission() {}
         func openPermissionSettings() {}
         func refresh() -> AXTarget? { current }
-        func capture() throws -> (AXTarget, String, any FocusableTextAccess) {
-            let access: any FocusableTextAccess = overrideAccess ?? field
-            return (current!, try access.read(), access)
-        }
+        func capture() throws -> (AXTarget, String, any FocusableTextAccess) { (current!, try field.read(), field) }
     }
     final class Credentials: CredentialStoring {
         var value = "only-a-test-key"
@@ -291,95 +284,6 @@ final class AppModelTests {
         restored.draftConfiguration.systemPrompt = " \n"
         expectFalse(restored.saveConfiguration())
         expectEqual(restored.configuration.systemPrompt, "把用户需求改写成简短的开发任务。")
-    }
-
-    func testRichRequestUsesMarkersAndAlwaysPreviewsWithRecoverableInvalidOutput() async throws {
-        let fixture = Fixture()
-        defer { fixture.clean() }
-        let runtime = AXAttachmentAccessTests.Runtime()
-        let access = try AXAttachmentTextAccess(target: runtime.fixture.access.target, runtime: runtime)
-        fixture.accessibility.overrideAccess = access
-        fixture.accessibility.current = runtime.fixture.access.target
-        fixture.model.quickReplacement = true
-        fixture.model.optimizeFocused()
-        let request = fixture.model.optimizationTask
-        await fixture.client.waitForRequests(1)
-        let sent = await fixture.client.lastPrompt!
-        let sentConfig = await fixture.client.lastConfiguration!
-        expectFalse(sent.contains("\u{FFFC}"))
-        expectTrue(sent.contains(access.protectedMarkers[0]))
-        expectTrue(sentConfig.systemPrompt.contains("Preserve attachment markers"))
-        await fixture.client.complete(1, with: "no markers")
-        await request?.value
-        expectFalse(fixture.model.canReplace)
-        expectTrue(fixture.model.resultValidationMessage?.contains("标记") == true)
-        fixture.model.regenerate(instruction: "")
-        let next = fixture.model.optimizationTask
-        await fixture.client.waitForRequests(2)
-        let valid = "新前\(access.protectedMarkers[0])新中\(access.protectedMarkers[1])新后"
-        await fixture.client.complete(2, with: valid)
-        await next?.value
-        expectTrue(fixture.model.canReplace)
-        await fixture.model.replace()
-        expectTrue(fixture.model.canUndo)
-        let writes = runtime.rangeWrites, previews = fixture.previews
-        fixture.model.optimizeFocused()
-        let again = fixture.model.optimizationTask
-        await fixture.client.waitForRequests(3)
-        await fixture.client.complete(3, with: valid + "more")
-        await again?.value
-        expectEqual(runtime.rangeWrites, writes, "Rich content must never use quick replacement")
-        expectEqual(fixture.previews, previews + 1)
-    }
-
-    func testDismissalCancelsRemainingRichRangeWrites() async throws {
-        let fixture = Fixture()
-        defer { fixture.clean() }
-        let runtime = AXAttachmentAccessTests.Runtime()
-        let access = try AXAttachmentTextAccess(target: runtime.fixture.access.target, runtime: runtime)
-        fixture.accessibility.overrideAccess = access
-        fixture.accessibility.current = runtime.fixture.access.target
-        fixture.model.optimizeFocused()
-        let request = fixture.model.optimizationTask
-        await fixture.client.waitForRequests(1)
-        await fixture.client.complete(1, with: "新前\(access.protectedMarkers[0])新中\(access.protectedMarkers[1])新后")
-        await request?.value
-        runtime.staleReadsAfterWrite = 2
-        let presentations = fixture.previews
-        let task = Task { await fixture.model.replace() }
-        while runtime.rangeWrites == 0 { await Task.yield() }
-        fixture.model.dismissPreview()
-        await task.value
-        expectEqual(runtime.rangeWrites, 1)
-        expectEqual(fixture.previews, presentations)
-        expectTrue(runtime.document.string.hasPrefix("前🧑‍💻"))
-        expectFalse(fixture.model.canUndo)
-    }
-
-    func testChangedRichSourceAndBadMarkersCanRetryLatest() async throws {
-        let fixture = Fixture()
-        defer { fixture.clean() }
-        let runtime = AXAttachmentAccessTests.Runtime()
-        let access = try AXAttachmentTextAccess(target: runtime.fixture.access.target, runtime: runtime)
-        fixture.accessibility.overrideAccess = access
-        fixture.accessibility.current = runtime.fixture.access.target
-        fixture.model.optimizeFocused()
-        let request = fixture.model.optimizationTask
-        await fixture.client.waitForRequests(1)
-        runtime.document.append(NSAttributedString(string: "原文新编辑"))
-        await fixture.client.complete(1, with: "no markers")
-        await request?.value
-        fixture.model.retryPreview()
-        let retry = fixture.model.optimizationTask
-        expectTrue(fixture.model.isBusy, "Retry must capture the new source rather than silently return")
-        guard fixture.model.isBusy else { return }
-        await fixture.client.waitForRequests(2)
-        let latest = await fixture.client.lastPrompt!
-        expectTrue(latest.hasSuffix("原文新编辑"))
-        await fixture.client.complete(2, with: latest + "优化")
-        await retry?.value
-        expectTrue(fixture.model.canReplace)
-        expectEqual(runtime.rangeWrites, 0)
     }
 
     private func hasEditor(_ view: NSView) -> Bool {
