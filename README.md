@@ -5,7 +5,7 @@ macOS 菜单栏 Prompt 优化工具，SwiftUI + AppKit，macOS 14+。本地构�
 ## 运行
 
 ```sh
-cd /Users/kker/jqh/PromptPolish
+cd PromptPolish
 bash scripts/build-app.sh
 open dist/PromptPolish.app
 ```
