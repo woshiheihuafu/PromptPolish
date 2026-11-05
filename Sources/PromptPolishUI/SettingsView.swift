@@ -19,7 +19,8 @@ struct SettingsView: View {
                     }.buttonStyle(.plain)
                 }
                 Spacer()
-                Text("版本 1.0.0 · 本地构建").font(.caption2).foregroundStyle(.secondary).padding(.leading, 8)
+                Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版") · 本地构建")
+                    .font(.caption2).foregroundStyle(.secondary).padding(.leading, 8)
             }.padding(16).frame(width: 175).background(.ultraThinMaterial)
             Divider()
             VStack(alignment: .leading, spacing: 0) {

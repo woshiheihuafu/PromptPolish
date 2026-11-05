@@ -50,7 +50,7 @@ swift run PromptPolishChecks
 bash scripts/build-app.sh
 ```
 
-本机的 CLT SDK 缺少 XCTest/Testing 运行库，因此 `PromptPolishChecks` 是可执行的行为检查程序，失败时返回非零退出码，当前 29 项检查，覆盖真实请求序列化/解析、未完成响应拒绝、配置校验、比较后写入、部分写入、撤销冲突/过期、原文 Unicode 码点变化、多屏浮层位置、原生 AppModel 暂停/取消/晚到响应及清空后编辑器保留。原生 UI 检查需可用的 macOS 桌面会话。
+本机的 CLT SDK 缺少 XCTest/Testing 运行库，因此 `PromptPolishChecks` 是可执行的行为检查程序，失败时返回非零退出码，当前 39 项检查，覆盖真实请求序列化/解析、未完成响应拒绝、配置校验、比较后写入、部分写入、撤销冲突/过期、原文 Unicode 码点变化、多屏浮层位置、原生 AppModel 暂停/取消/晚到响应及清空后编辑器保留。原生 UI 检查需可用的 macOS 桌面会话。
 
 `dist/PromptPolish.app` 为当前机器架构的本地 ad-hoc 签名产物，未公证或对外发布。重编译后系统可能要求重新授予辅助功能权限；发行构建应使用固定 Developer ID 签名与公证。
 
@@ -66,6 +66,14 @@ Apple 参考：[AXIsProcessTrusted](https://developer.apple.com/documentation/ap
 
 ## 当前验证记录
 
-已通过 29 项行为检查、Release 构建、Info.plist 校验及 codesign 验证；原生设置页已启动检查；最终版本的辅助功能授权已生效，实际 TextEdit 纯文本框读取成功，控件声明支持直接写回。该检查未调用 API，也未执行真实外部写回。独立代码审查提出的暂停仍写回、截断响应和清空后编辑器消失问题均有复现失败后通过的回归检查。
+首版 1.0.0 已通过 29 项行为检查及原生设置页检查，曾获辅助功能授权并在 TextEdit 读取成功；当时未执行真实外部写回。当前 1.0.1 修正版通过 39 项检查、Release 构建、Info.plist 和 codesign 验证，本次更新需按新签名刷新系统授权。独立代码审查提出的暂停仍写回、截断响应和清空后编辑器消失问题均有复现失败后通过的回归检查。
 
 Codex 内的实机输入框读写尚未验收：当前自动化工具的安全限制禁止操作 Codex 应用自身。Cursor、实际服务商 API、富文本与输入法等兼容性也需使用真实配置进一步确认；测试和编译通过不等于这些场景已验证。
+
+### 1.0.1 · 2026-11-05：预览失焦误报修正
+
+修正点击预览内「替换原文」时，源应用的焦点信息为空而被误报为输入框已变化的问题。预览位于前台时核对捕获的原控件仍有效、仍属于原窗口，继续在实际写入前比较完整原文，并核对写后读回。不会按文本或位置重新匹配其他输入框。已知换窗口、换输入框、切换到无关应用、失效/安全控件及新编辑仍会被拒绝。
+
+39 项检查通过，包含实际 AXTextAccess 与 TextTransaction 的失焦替换/撤销回归。此证据为受控 OS 边界检查，修正版在真实 Codex 中仍需复测；若遇到确实变化的目标，新提示会分别指出应用、窗口、输入框或焦点问题。
+
+焦点属性与窗口归属不同：[Apple 的 AXFocusedWindow 文档](https://developer.apple.com/documentation/applicationservices/kaxfocusedwindowattribute)将应用级焦点窗口属性列为推荐属性；[AXWindow 文档](https://developer.apple.com/documentation/applicationservices/kaxwindowattribute)说明了控件所属窗口的属性。本工具使用原控件的实时窗口归属与完整文本核对保护替换。

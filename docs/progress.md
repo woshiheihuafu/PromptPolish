@@ -32,3 +32,14 @@
 - Final live evidence: after user completed the current app grant, native UI reports 已授权. User physically focused the isolated plain-text TextEdit document and ran the no-API probe; app displayed 文本编辑：读取成功 · 控件声明支持直接写回，写入后仍需核对. User confirmed 显示读取成功. This verifies real AX capture only, not an actual provider request or external replace/undo.
 - Temporary TextEdit test document contains only generated generic Chinese/Emoji text; the pre-existing user document was not modified.
 - Final repository kept locally on codex/promptpolish-native; no remote, merge or publication requested.
+
+## 2026-11-05 — Preview-focus false target-change report
+
+- User reports the generic target/window changed banner specifically after clicking Replace in Codex.
+- Root cause reproduced at the adapter boundary: old validation required both source AXFocusedUIElement and AXFocusedWindow even while our preview was foreground. Apple documents application-level focused-window metadata as recommended; pinned AXWindow membership provides the containing-window identity.
+- Extracted the OS-only AXRuntime boundary and added adapter+transaction checks (no user prompts, credentials or external AX access in tests). Stable focused-field baseline passed; background blur and missing focused-window regressions failed with targetChanged before the fix.
+- Fix: while our preview is foreground, allow absent source focus metadata only for the exact live captured field belonging to the exact captured source window. Reject an explicitly different focused field/window, wrong window membership, foreign foreground app and invalid/secure handles. No fuzzy rebind or clipboard path; exact UTF-8 transaction comparisons unchanged.
+- Validation: 39 checks, 0 failures; Release product build passes. A focused independent reviewer reported no important findings.
+- Actual Codex acceptance remains pending; CUA restriction against operating Codex remains respected. No assertion of a successful real Codex replacement is made from mocked boundary tests.
+
+- Packaged hotfix as 1.0.1 (bundle build 2); final 39 checks and signature verification pass. Restarted app; its initial Keychain read awaits OS confirmation after the ad-hoc identity changed. SecurityAgent automation was explicitly denied; user handoff requested for Keychain/Accessibility refresh and an actual Codex test, without collecting any API key or attempting another path into SecurityAgent/Codex.

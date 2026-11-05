@@ -30,7 +30,7 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, _ message: Strin
 @main
 struct Checks {
     @MainActor static func main() async {
-        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), api = OptimizationClientTests(), model = AppModelTests()
+        let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests()
         let sync: [(String, () throws -> Void)] = [
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
             ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
@@ -48,7 +48,17 @@ struct Checks {
             ("left button placement", placement.testRightEdgeUsesLeftAndDoesNotOverlap),
             ("above button placement", placement.testSpansScreenWidthUsesAbove),
             ("no room/offscreen hides button", placement.testNoRoomOrOffscreenHidesButton),
-            ("secondary display", placement.testNegativeOriginSecondaryDisplay)
+            ("secondary display", placement.testNegativeOriginSecondaryDisplay),
+            ("original focused AX target reads", ax.testOriginalFocusedTargetCanBeRead),
+            ("preview focus retains exact AX target", ax.testPreviewFocusDoesNotInvalidatePinnedField),
+            ("AX focused window is optional", ax.testOptionalFocusedWindowIsNotRequiredWhenExactFieldIsKnown),
+            ("preview blur still protects newer text", ax.testChangedTextStillBlocksWriteAfterPreviewFocus),
+            ("AX rejects another focused field", ax.testOtherFocusedFieldIsNeverSubstituted),
+            ("AX rejects another focused window", ax.testOtherWindowIsNeverAccepted),
+            ("AX rejects changed window membership", ax.testPinnedFieldMovedToOtherWindowIsRejected),
+            ("source foreground requires original focus", ax.testForegroundSourceStillRequiresItsOriginalFocus),
+            ("AX rejects unrelated foreground app", ax.testUnrelatedForegroundApplicationBlocksWrite),
+            ("AX rejects invalid and secure handles", ax.testInvalidOrSecurePinnedTargetsAreRejected)
         ]
         var count = 0
         for (name, check) in sync {
