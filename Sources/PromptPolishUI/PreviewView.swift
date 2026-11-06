@@ -38,9 +38,6 @@ struct PreviewView: View {
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
             }
-            if let notice = model.quickModeNotice {
-                Label(notice, systemImage: "checkmark.shield").font(.callout).foregroundStyle(.secondary)
-            }
             HStack(alignment: .top, spacing: 16) {
                 if model.showComparison {
                     VStack(alignment: .leading, spacing: 8) {

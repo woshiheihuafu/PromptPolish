@@ -121,7 +121,7 @@ struct SettingsView: View {
                 Toggle("优化完成后快速替换", isOn: Binding(get: { model.quickReplacement }, set: { value in
                     if value { confirmQuick = true } else { model.quickReplacement = false }
                 }))
-                Text("默认先预览后替换。每个应用在本次会话完成一次成功的确认替换后，快速模式才会跳过预览；始终不发送消息，原文或目标变化时暂停替换。")
+                Text("默认先预览后替换。开启快速替换后，从下一次优化起自动写回，无需先手动替换一次。始终不发送消息；原文或目标变化时暂停替换。")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("隐私与撤销") {

@@ -189,7 +189,7 @@ final class AppModelTests {
         window.contentView = nil
     }
 
-    func testQuickModeRequiresSuccessfulManualReplacementFirst() async {
+    func testQuickModeAppliesToFirstOptimizationWhenEnabled() async {
         let fixture = Fixture()
         defer { fixture.clean() }
         fixture.model.quickReplacement = true
@@ -198,17 +198,81 @@ final class AppModelTests {
         await fixture.client.waitForRequests(1)
         await fixture.client.complete(1, with: "first optimized result")
         await first?.value
-        expectTrue(fixture.accessibility.field.writes.isEmpty, "An unverified app must preview before its first write")
-        expectEqual(fixture.previews, 1)
-        await fixture.model.replace()
+        expectEqual(fixture.accessibility.field.writes, ["first optimized result"], "Enabled quick mode must work on the first request after launch")
+        expectEqual(fixture.previews, 0)
         expectEqual(fixture.accessibility.field.text, "first optimized result")
+        expectTrue(fixture.model.canUndo)
         fixture.model.optimizeFocused()
         let second = fixture.model.optimizationTask
         await fixture.client.waitForRequests(2)
         await fixture.client.complete(2, with: "second optimized result")
         await second?.value
         expectEqual(fixture.accessibility.field.text, "second optimized result")
+        expectEqual(fixture.previews, 0)
+    }
+
+    func testDisablingQuickModeDuringRequestShowsPreviewWithoutWriting() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.quickReplacement = true
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        expectEqual(fixture.previews, 0)
+        await fixture.client.waitForRequests(1)
+        fixture.model.quickReplacement = false
+        await fixture.client.complete(1, with: "result")
+        await request?.value
+        expectTrue(fixture.accessibility.field.writes.isEmpty)
         expectEqual(fixture.previews, 1)
+        expectTrue(fixture.model.canReplace)
+    }
+
+    func testQuickModeStillPreviewsReadOnlyTargets() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        let target = fixture.accessibility.current!
+        fixture.accessibility.current = AXTarget(application: target.application, element: target.element, window: target.window, canWrite: false, rect: target.rect)
+        fixture.model.quickReplacement = true
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        expectEqual(fixture.previews, 1)
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "result")
+        await request?.value
+        expectFalse(fixture.model.canReplace)
+        expectTrue(fixture.accessibility.field.writes.isEmpty)
+    }
+
+    func testSavedQuickModeAppliesAfterModelRestart() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.quickReplacement = true
+        let restarted = AppModel(client: fixture.client, keychain: Credentials(), accessibility: fixture.accessibility, defaults: fixture.defaults)
+        var previews = 0
+        restarted.showPreview = { previews += 1 }
+        expectTrue(restarted.quickReplacement)
+        restarted.optimizeFocused()
+        let request = restarted.optimizationTask
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "after restart")
+        await request?.value
+        expectEqual(fixture.accessibility.field.text, "after restart")
+        expectEqual(previews, 0)
+        expectTrue(restarted.canUndo)
+    }
+
+    func testEnablingQuickModeMidPreviewRequestDoesNotChangeItsIntent() async {
+        let fixture = Fixture()
+        defer { fixture.clean() }
+        fixture.model.optimizeFocused()
+        let request = fixture.model.optimizationTask
+        await fixture.client.waitForRequests(1)
+        fixture.model.quickReplacement = true
+        await fixture.client.complete(1, with: "keep preview")
+        await request?.value
+        expectTrue(fixture.accessibility.field.writes.isEmpty)
+        expectEqual(fixture.previews, 1)
+        expectTrue(fixture.model.canReplace)
     }
 
     func testNewOptimizationShowsComparisonBeforeResponse() async {

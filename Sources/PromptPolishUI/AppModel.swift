@@ -29,7 +29,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var original = ""
     @Published var result = ""
     @Published private(set) var hasReceivedResult = false
-    @Published private(set) var quickModeNotice: String?
     @Published private(set) var previousResult: String?
     @Published private(set) var message: String?
     @Published private(set) var successMessage: String?
@@ -67,7 +66,6 @@ final class AppModel: ObservableObject {
     private var undoTarget: AXTarget?
     private var undoScene: OptimizationScene?
     private var replacementBlocked = false
-    private var verifiedApplications = Set<pid_t>()
     private var previewDismissalID = UUID()
 
     init(client: any PromptOptimizing = OptimizationClient(), keychain: any CredentialStoring = KeychainStore(), accessibility: (any AccessibilityProviding)? = nil, defaults: UserDefaults = .standard) {
@@ -156,7 +154,7 @@ final class AppModel: ObservableObject {
             sessionScene = scene
             previewAnchorRect = target.rect
             original = text; result = ""; previousResult = nil; hasReceivedResult = false
-            replacementBlocked = false; message = nil; successMessage = nil; quickModeNotice = nil
+            replacementBlocked = false; message = nil; successMessage = nil
             showComparison = true
             startRequest(key: key, instruction: nil, permitsQuickReplace: true)
         } catch {
@@ -179,8 +177,10 @@ final class AppModel: ObservableObject {
         if let sessionScene { config.systemPrompt = sessionScene.systemPrompt }
         requestID = id; isBusy = true; message = nil; successMessage = nil
         let oldResult = result
-        let fastPath = permitsQuickReplace && quickReplacement && sessionTarget.map { verifiedApplications.contains($0.application.processIdentifier) } == true
-        let presentedBeforeResponse = !fastPath
+        // The user's explicit quick-mode choice applies to this request immediately.
+        // Do not reset it behind an in-memory per-process "first manual write" gate.
+        let requestedQuickReplace = permitsQuickReplace && quickReplacement && sessionTarget?.canWrite == true
+        let presentedBeforeResponse = !requestedQuickReplace
         statusChanged()
         if presentedBeforeResponse { showPreview() }
         optimizationTask = Task { [weak self, client] in
@@ -198,14 +198,9 @@ final class AppModel: ObservableObject {
                     self.replacementBlocked = true
                     self.message = error.localizedDescription
                 }
-                if self.quickReplacement && permitsQuickReplace && self.canReplace,
-                   let pid = self.sessionTarget?.application.processIdentifier,
-                   self.verifiedApplications.contains(pid) {
+                if requestedQuickReplace && self.quickReplacement && self.canReplace {
                     await self.replace()
                 } else {
-                    if self.quickReplacement && permitsQuickReplace && self.canReplace {
-                        self.quickModeNotice = "本次先预览：该应用完成一次成功的确认替换后，本次会话才会启用快速模式。"
-                    }
                     if !presentedBeforeResponse { self.showPreview() }
                 }
                 self.statusChanged()
@@ -248,7 +243,6 @@ final class AppModel: ObservableObject {
         defer { isWriting = false; statusChanged() }
         do {
             try await transaction.replace(with: result)
-            if let pid = sessionTarget?.application.processIdentifier { verifiedApplications.insert(pid) }
             undoTransaction = transaction; undoAccess = access; undoTarget = sessionTarget
             undoScene = sessionScene
             lastActionLabel = "已替换，未发送"

@@ -100,4 +100,22 @@ final class SceneTests {
         await fixture.client.complete(2, with: "new")
         await next?.value
     }
+
+    func testQuickModeAppliesToSceneOnFirstUse() async {
+        let fixture = AppModelTests.Fixture()
+        defer { fixture.clean() }
+        let scene = OptimizationScene(name: "开发需求", systemPrompt: "改写开发需求。")
+        fixture.model.draftSceneConfiguration.scenes = [scene]
+        _ = fixture.model.saveScenes()
+        fixture.model.quickReplacement = true
+        fixture.model.optimizeScene(id: scene.id)
+        let request = fixture.model.optimizationTask
+        await fixture.client.waitForRequests(1)
+        await fixture.client.complete(1, with: "优化后的开发需求")
+        await request?.value
+        expectEqual(fixture.accessibility.field.text, "优化后的开发需求")
+        expectEqual(fixture.previews, 0)
+        expectTrue(fixture.model.canUndo)
+        expectEqual(await fixture.client.lastConfiguration?.systemPrompt, "改写开发需求。")
+    }
 }
