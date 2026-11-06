@@ -15,6 +15,7 @@ struct PreviewView: View {
             }
             Text("目标：\(model.sessionTarget?.name ?? "原应用") · 触发时的输入框")
                 .font(.callout).foregroundStyle(.secondary)
+            if let scene = model.sessionScene { Label("场景：\(scene.name)", systemImage: "square.grid.2x2").font(.caption).foregroundStyle(.secondary) }
             HStack {
                 Picker("显示方式", selection: $model.showComparison) {
                     Text("优化结果").tag(false)

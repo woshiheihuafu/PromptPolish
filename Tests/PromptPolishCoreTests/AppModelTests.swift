@@ -5,11 +5,13 @@ import ApplicationServices
 @testable import PromptPolishUI
 
 actor ControlledOptimizer: PromptOptimizing {
+    private(set) var lastConfiguration: APIConfiguration?
     private var count = 0
     private var pending: [Int: CheckedContinuation<String, Error>] = [:]
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
     func optimize(prompt: String, configuration: APIConfiguration, apiKey: String, instruction: String?) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        lastConfiguration = configuration
+        return try await withCheckedThrowingContinuation { continuation in
             count += 1
             pending[count] = continuation
             let ready = waiters.filter { $0.0 <= count }

@@ -37,7 +37,18 @@ func expectAsyncThrows<T>(_ expression: @autoclosure () async throws -> T, _ mes
 struct Checks {
     @MainActor static func main() async {
         let transaction = TextTransactionTests(), configuration = ConfigurationTests(), placement = FloatingPlacementTests(), previewPlacement = PreviewPlacementTests(), api = OptimizationClientTests(), model = AppModelTests(), ax = AXTextAccessTests(), panel = PreviewPanelTests()
+        let scenes = SceneTests()
+        let hover = FloatingHoverTests()
+        let passive = PassiveProbeTests()
         let sync: [(String, () throws -> Void)] = [
+            ("scene limit and required fields", scenes.testSceneLimitAndRequiredFields),
+            ("scene settings persist and cancel", scenes.testSceneSettingsPersistAndCancelWithoutAPIChanges),
+            ("deleted scene cannot start optimization", scenes.testDeletedSceneDoesNotCaptureOrStartRequest),
+            ("expanded hover remains anchored outside input", hover.testExpansionKeepsOriginalHitAreaAndAvoidsInputAtEdges),
+            ("empty scenes and no-space hover geometry", hover.testEmptyScenesHaveNoChooserAndNoRoomIsSafe),
+            ("unconfigured hover has no popup", hover.testNoConfiguredScenesDoesNotShowPopup),
+            ("native tracking starts hover synchronously", hover.testNativeTrackingDeliversEntrySynchronouslyForInactiveWindows),
+            ("different input at same geometry closes old chooser", hover.testSameGeometryDifferentInputClosesOldChooser),
             ("legacy API configuration migration", configuration.testOldConfigurationMigratesWithoutLosingProviderSettings),
             ("custom prompt save and discard", model.testCustomPromptSaveAndDiscardUseExistingSettingsSemantics),
             ("base URL normalization", configuration.testBuildsEndpointWithoutDuplicatingSlashes),
@@ -72,6 +83,12 @@ struct Checks {
             count += 1
         }
         let asyncChecks: [(String, () async throws -> Void)] = [
+            ("scene prompt survives regeneration and resets for default", scenes.testSceneRequestRegenerationAndDefaultKeepCorrectPrompt),
+            ("hover opens immediately and menu crossing retains it", hover.testHoverImmediatelyShowsConfiguredMenuAndCrossingKeepsItOpen),
+            ("passive probe is nonblocking and coalesces newest target", passive.testPassiveProbeDoesNotBlockUIAndCoalescesNewestTarget),
+            ("cancelled passive probe cannot overwrite capture", passive.testCancelledProbeCannotOverwriteFreshCapture),
+            ("reenter during collapse keeps chooser expanded", hover.testReenterDuringCollapseAndPeriodicUpdateKeepMenuExpanded),
+            ("latest-source scene persists and adding stops at five", scenes.testLatestSourceUsesSessionSceneAndAddStopsAtFive),
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
             ("changed original blocks write", transaction.testChangedOriginalRefusesToOverwrite),
             ("undo protects new edits", transaction.testUndoRefusesToOverwriteNewEdits),

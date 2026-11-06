@@ -60,7 +60,7 @@ struct AXTarget {
 final class AccessibilityService: AccessibilityProviding {
     private(set) var current: AXTarget?
     var isTrusted: Bool { AXIsProcessTrusted() }
-    private let system = AXUIElementCreateSystemWide()
+    private let passive = PassiveTargetTracker()
 
     func requestPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -76,27 +76,30 @@ final class AccessibilityService: AccessibilityProviding {
     /// Passive tracking reads only role, geometry and capability, never the prompt value.
     @discardableResult
     func refresh() -> AXTarget? {
-        guard isTrusted, let app = NSWorkspace.shared.frontmostApplication else { current = nil; return nil }
-        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { return current }
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(appElement, 0.25)
-        guard let focused = axElement(appElement, kAXFocusedUIElementAttribute) ?? axElement(system, kAXFocusedUIElementAttribute),
-              let field = axTextField(focused),
-              let window = axElement(field, kAXWindowAttribute),
-              let rect = frame(field), rect.width >= 30, rect.height >= 18,
-              axString(field, kAXSubroleAttribute) != (kAXSecureTextFieldSubrole as String) else {
-            current = nil
-            return nil
+        guard isTrusted, let app = NSWorkspace.shared.frontmostApplication else { passive.cancel(); current = nil; return nil }
+        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { passive.cancel(); return current }
+        if current?.application.processIdentifier != app.processIdentifier { current = nil }
+        passive.request(pid: app.processIdentifier) { [weak self] result in
+            guard let self, self.isTrusted,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
+            self.current = result.flatMap { self.target(from: $0, application: app) }
         }
-        var settable = DarwinBoolean(false)
-        let canWrite = AXUIElementIsAttributeSettable(field, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
-        current = AXTarget(application: app, element: field, window: window, canWrite: canWrite, rect: rect)
         return current
     }
 
     func capture() throws -> (AXTarget, String, any FocusableTextAccess) {
         guard isTrusted else { throw AccessError.permission }
-        guard let target = refresh() else { throw AccessError.noField }
+        passive.cancel()
+        guard let app = NSWorkspace.shared.frontmostApplication else { throw AccessError.noField }
+        let captured: AXTarget?
+        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { captured = current }
+        else { captured = SystemPassiveAXProbe.read(app.processIdentifier).flatMap { target(from: $0, application: app) } }
+        guard let target = captured else { throw AccessError.noField }
+        // Passive handles use short read timeouts. Explicit capture/read/write must
+        // retain the normal default instead of inheriting the probe's 150 ms budget.
+        AXUIElementSetMessagingTimeout(target.element, 0)
+        AXUIElementSetMessagingTimeout(target.window, 0)
+        current = target
         let access = AXTextAccess(target: target)
         let value = try access.read()
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw OptimizationError.emptyPrompt }
@@ -105,15 +108,10 @@ final class AccessibilityService: AccessibilityProviding {
         return (target, value, access)
     }
 
-    private func frame(_ element: AXUIElement) -> CGRect? {
-        guard let position = axValue(element, kAXPositionAttribute), let size = axValue(element, kAXSizeAttribute),
-              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
-        var point = CGPoint.zero, dimensions = CGSize.zero
-        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-              let primary = NSScreen.screens.first else { return nil }
-        let rect = CGRect(x: point.x, y: primary.frame.maxY - point.y - dimensions.height, width: dimensions.width, height: dimensions.height)
-        guard rect.minX.isFinite, rect.minY.isFinite, rect.width.isFinite, rect.height.isFinite else { return nil }
-        return rect
+    private func target(from result: PassiveAXTarget, application: NSRunningApplication) -> AXTarget? {
+        guard result.pid == application.processIdentifier, !application.isTerminated, let primary = NSScreen.screens.first else { return nil }
+        let rect = CGRect(x: result.rawFrame.minX, y: primary.frame.maxY - result.rawFrame.maxY, width: result.rawFrame.width, height: result.rawFrame.height)
+        return AXTarget(application: application, element: result.element, window: result.window, canWrite: result.canWrite, rect: rect)
     }
 }
 
@@ -178,34 +176,4 @@ final class AXTextAccess: FocusableTextAccess {
         target.application.activate()
     }
 }
-
-@MainActor
-private func axValue(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
-    return value
-}
-
-@MainActor
-private func axString(_ element: AXUIElement, _ attribute: String) -> String? {
-    axValue(element, attribute) as? String
-}
-
-@MainActor
-private func axElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
-    guard let value = axValue(element, attribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-    return (value as! AXUIElement)
-}
-
-@MainActor
-private func axTextField(_ focused: AXUIElement) -> AXUIElement? {
-        var candidate: AXUIElement? = focused
-        for _ in 0..<4 {
-            guard let node = candidate else { return nil }
-            let role = axString(node, kAXRoleAttribute)
-            if role == (kAXTextAreaRole as String) || role == (kAXTextFieldRole as String) || role == (kAXComboBoxRole as String) { return node }
-            candidate = axElement(node, kAXParentAttribute)
-        }
-        return nil
-    }
 

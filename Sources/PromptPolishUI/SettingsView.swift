@@ -28,6 +28,7 @@ struct SettingsView: View {
                 switch model.selectedSettings {
                 case .general: general
                 case .api: api
+                case .scenes: SceneSettingsView(model: model)
                 case .access: access
                 case .shortcuts: shortcuts
                 }
@@ -184,7 +185,7 @@ struct SettingsView: View {
 
     private var keyPlaceholder: String { model.hasKey ? "密钥已保存；留空保持不变" : "输入 API Key" }
     private func icon(_ page: AppModel.SettingsPage) -> String {
-        switch page { case .general: return "slider.horizontal.3"; case .api: return "sparkles"; case .access: return "checkmark.shield"; case .shortcuts: return "keyboard" }
+        switch page { case .general: return "slider.horizontal.3"; case .api: return "sparkles"; case .scenes: return "square.grid.2x2"; case .access: return "checkmark.shield"; case .shortcuts: return "keyboard" }
     }
 }
 

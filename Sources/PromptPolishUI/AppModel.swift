@@ -4,13 +4,17 @@ import PromptPolishCore
 
 @MainActor
 final class AppModel: ObservableObject {
-    enum SettingsPage: String, CaseIterable { case general = "通用", api = "AI 服务", access = "权限与兼容性", shortcuts = "快捷键" }
+    enum SettingsPage: String, CaseIterable { case general = "通用", api = "AI 服务", scenes = "优化场景", access = "权限与兼容性", shortcuts = "快捷键" }
     let accessibility: any AccessibilityProviding
     private let client: any PromptOptimizing
     private let keychain: any CredentialStoring
     private let defaults: UserDefaults
     @Published private(set) var configuration: APIConfiguration
     @Published var draftConfiguration: APIConfiguration
+    @Published private(set) var sceneConfiguration: SceneConfiguration
+    @Published var draftSceneConfiguration: SceneConfiguration
+    @Published var sceneSettingsMessage: String?
+    @Published private(set) var sessionScene: OptimizationScene?
     @Published var draftKey = ""
     @Published var selectedSettings: SettingsPage = .api
     @Published var settingsMessage: String?
@@ -61,6 +65,7 @@ final class AppModel: ObservableObject {
     private var undoTransaction: TextTransaction?
     private var undoAccess: (any FocusableTextAccess)?
     private var undoTarget: AXTarget?
+    private var undoScene: OptimizationScene?
     private var replacementBlocked = false
     private var verifiedApplications = Set<pid_t>()
     private var previewDismissalID = UUID()
@@ -73,6 +78,10 @@ final class AppModel: ObservableObject {
         let saved = defaults.data(forKey: "apiConfiguration").flatMap { try? JSONDecoder().decode(APIConfiguration.self, from: $0) } ?? APIConfiguration()
         configuration = saved
         draftConfiguration = saved
+        let decodedScenes = defaults.data(forKey: "sceneConfiguration").flatMap { try? JSONDecoder().decode(SceneConfiguration.self, from: $0) }
+        let savedScenes = decodedScenes.flatMap { try? $0.validated() } ?? SceneConfiguration()
+        sceneConfiguration = savedScenes
+        draftSceneConfiguration = savedScenes
         floatingPaused = defaults.bool(forKey: "floatingPaused")
         optimizationEnabled = defaults.object(forKey: "optimizationEnabled") == nil ? true : defaults.bool(forKey: "optimizationEnabled")
         quickReplacement = defaults.bool(forKey: "quickReplacement")
@@ -81,7 +90,9 @@ final class AppModel: ObservableObject {
         do { hasKey = !(try keychain.load()).isEmpty } catch { settingsMessage = error.localizedDescription }
     }
 
-    var settingsDirty: Bool { configuration != draftConfiguration || !draftKey.isEmpty }
+    var apiSettingsDirty: Bool { configuration != draftConfiguration || !draftKey.isEmpty }
+    var sceneSettingsDirty: Bool { sceneConfiguration != draftSceneConfiguration }
+    var settingsDirty: Bool { apiSettingsDirty || sceneSettingsDirty }
     var hasPreview: Bool { transaction != nil }
     var canReplace: Bool {
         optimizationEnabled && !isBusy && !isWriting && !replacementBlocked && transaction?.state == .ready && sessionTarget?.canWrite == true &&
@@ -107,20 +118,29 @@ final class AppModel: ObservableObject {
         }
         if !isWriting, let transaction, transaction.expiresAt <= Date() {
             cancelRequest()
-            self.transaction = nil; access = nil; sessionTarget = nil
+            self.transaction = nil; access = nil; sessionTarget = nil; sessionScene = nil
             previewSessionID = nil
             previewAnchorRect = nil
             original = ""; result = ""; previousResult = nil; hasReceivedResult = false
             message = TransactionError.expired.localizedDescription
         }
         if let undoTransaction, undoTransaction.expiresAt <= Date() {
-            self.undoTransaction = nil; undoAccess = nil; undoTarget = nil
+            self.undoTransaction = nil; undoAccess = nil; undoTarget = nil; undoScene = nil
             lastActionLabel = "上次操作已过期"
             statusChanged()
         }
     }
 
     func optimizeFocused() {
+        startOptimization(scene: nil)
+    }
+
+    func optimizeScene(id: UUID) {
+        guard let scene = sceneConfiguration.scenes.first(where: { $0.id == id }) else { notify(SceneError.unavailable.localizedDescription, false); return }
+        startOptimization(scene: scene)
+    }
+
+    private func startOptimization(scene: OptimizationScene?) {
         guard !isWriting else { notify("正在确认上次写回，请稍候。", false); return }
         guard optimizationEnabled else { notify("优化已暂停，请从菜单栏或通用设置中开启。", false); return }
         guard !isBusy else { notify("优化仍在进行，可从预览或菜单栏取消。", false); return }
@@ -133,6 +153,7 @@ final class AppModel: ObservableObject {
             transaction = TextTransaction(access: access, original: text)
             previewSessionID = UUID()
             self.access = access; sessionTarget = target
+            sessionScene = scene
             previewAnchorRect = target.rect
             original = text; result = ""; previousResult = nil; hasReceivedResult = false
             replacementBlocked = false; message = nil; successMessage = nil; quickModeNotice = nil
@@ -153,7 +174,9 @@ final class AppModel: ObservableObject {
 
     private func startRequest(key: String, instruction: String?, permitsQuickReplace: Bool) {
         cancelRequest()
-        let id = UUID(), prompt = original, config = configuration
+        let id = UUID(), prompt = original
+        var config = configuration
+        if let sessionScene { config.systemPrompt = sessionScene.systemPrompt }
         requestID = id; isBusy = true; message = nil; successMessage = nil
         let oldResult = result
         let fastPath = permitsQuickReplace && quickReplacement && sessionTarget.map { verifiedApplications.contains($0.application.processIdentifier) } == true
@@ -208,7 +231,7 @@ final class AppModel: ObservableObject {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { access?.restoreFocus() }
     }
 
-    func optimizeLatest() { cancelRequest(); optimizeFocused() }
+    func optimizeLatest() { cancelRequest(); startOptimization(scene: sessionScene) }
 
     func restorePreviousResult() {
         guard !isWriting else { return }
@@ -227,6 +250,7 @@ final class AppModel: ObservableObject {
             try await transaction.replace(with: result)
             if let pid = sessionTarget?.application.processIdentifier { verifiedApplications.insert(pid) }
             undoTransaction = transaction; undoAccess = access; undoTarget = sessionTarget
+            undoScene = sessionScene
             lastActionLabel = "已替换，未发送"
             successMessage = "已替换，未发送"
             closePreview()
@@ -257,6 +281,7 @@ final class AppModel: ObservableObject {
             // Show both snapshots without overwriting any newer edit.
             cancelRequest()
             transaction = undoTransaction; access = undoAccess; sessionTarget = undoTarget
+            sessionScene = undoScene
             previewSessionID = UUID()
             previewAnchorRect = undoTarget?.rect
             original = undoTransaction.original; result = undoTransaction.replacement ?? ""
@@ -294,7 +319,38 @@ final class AppModel: ObservableObject {
         } catch { settingsMessage = error.localizedDescription; return false }
     }
 
-    func discardDraft() { cancelTest(); draftConfiguration = configuration; draftKey = ""; settingsMessage = nil }
+    func discardDraft() { cancelTest(); draftConfiguration = configuration; draftKey = ""; settingsMessage = nil; discardSceneDraft() }
+
+    func addScene() -> UUID? {
+        guard draftSceneConfiguration.scenes.count < SceneConfiguration.maximumCount else { return nil }
+        let scene = OptimizationScene(systemPrompt: configuration.systemPrompt)
+        draftSceneConfiguration.scenes.append(scene)
+        return scene.id
+    }
+
+    func discardSceneDraft() { draftSceneConfiguration = sceneConfiguration; sceneSettingsMessage = nil }
+
+    @discardableResult
+    func saveScenes() -> Bool {
+        do {
+            let valid = try draftSceneConfiguration.validated()
+            let data = try JSONEncoder().encode(valid)
+            defaults.set(data, forKey: "sceneConfiguration")
+            sceneConfiguration = valid; draftSceneConfiguration = valid
+            sceneSettingsMessage = "场景配置已保存"
+            statusChanged()
+            return true
+        } catch { sceneSettingsMessage = error.localizedDescription; return false }
+    }
+
+    func savePendingSettings() -> Bool {
+        if sceneSettingsDirty {
+            do { _ = try draftSceneConfiguration.validated() }
+            catch { sceneSettingsMessage = error.localizedDescription; selectedSettings = .scenes; return false }
+        }
+        if apiSettingsDirty && !saveConfiguration() { selectedSettings = .api; return false }
+        return !sceneSettingsDirty || saveScenes()
+    }
 
     func testConnection() {
         guard !isTesting else { return }

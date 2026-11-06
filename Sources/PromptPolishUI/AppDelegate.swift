@@ -138,13 +138,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === settingsWindow, model.settingsDirty {
             let alert = NSAlert()
-            alert.messageText = "保存 AI 服务配置的修改？"
+            alert.messageText = "保存设置中的修改？"
             alert.informativeText = "未保存的配置只会保留在本次窗口中。"
             alert.addButton(withTitle: "保存")
             alert.addButton(withTitle: "放弃修改")
             alert.addButton(withTitle: "取消")
             switch alert.runModal() {
-            case .alertFirstButtonReturn: return model.saveConfiguration()
+            case .alertFirstButtonReturn: return model.savePendingSettings()
             case .alertSecondButtonReturn: model.discardDraft(); return true
             default: return false
             }

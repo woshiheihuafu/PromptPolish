@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import QuartzCore
 import PromptPolishCore
 
 private final class PassivePanel: NSPanel {
@@ -9,41 +10,102 @@ private final class PassivePanel: NSPanel {
 
 @MainActor
 final class FloatingButtonController {
+    enum Surface: Hashable { case button, menu }
     private let model: AppModel
     private let buttonPanel: NSPanel
+    let scenePanel: NSPanel
     private let noticePanel: NSPanel
-    private var expanded = false
-    private var lastRect: CGRect?
+    private let buttonView: FloatingActionView
+    private let sceneView: FloatingSceneView
+    private let screens: () -> [CGRect]
+    private let ownFrontmost: () -> Bool
+    private let reduceMotion: () -> Bool
+    private(set) var isExpanded = false
+    private var hovered = Set<Surface>()
+    private var collapseTask: Task<Void, Never>?
+    private var layout: FloatingHoverLayout?
+    private var lastScenes: [OptimizationScene] = []
+    private var lastTarget: AXTarget?
     private var noticeDismiss: DispatchWorkItem?
 
-    init(model: AppModel) {
+    init(model: AppModel, screens: @escaping () -> [CGRect] = { NSScreen.screens.map(\.visibleFrame) }, ownFrontmost: @escaping () -> Bool = { NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier }, reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }) {
         self.model = model
+        self.screens = screens; self.ownFrontmost = ownFrontmost; self.reduceMotion = reduceMotion
         buttonPanel = Self.panel()
+        scenePanel = Self.panel()
         noticePanel = Self.panel()
-        buttonPanel.contentView = NSHostingView(rootView: FloatingButtonView(action: { [weak model] in model?.optimizeFocused() }, hover: { [weak self] value in self?.setHover(value) ?? false }))
+        buttonView = FloatingActionView(); sceneView = FloatingSceneView()
+        buttonPanel.contentView = buttonView; scenePanel.contentView = sceneView
+        buttonView.action = { [weak self] in self?.hide(); model.optimizeFocused() }
+        buttonView.onHover = { [weak self] entered in self?.hoverChanged(.button, entered: entered) }
+        sceneView.onHover = { [weak self] entered in self?.hoverChanged(.menu, entered: entered) }
+        sceneView.choose = { [weak self] id in self?.hide(); model.optimizeScene(id: id) }
     }
 
     func update() {
-        let ownFront = NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
-        guard model.optimizationEnabled, model.isTrusted, !model.floatingPaused, !ownFront,
-              let target = model.detectedTarget else { buttonPanel.orderOut(nil); return }
-        lastRect = target.rect
-        positionButton()
+        guard model.optimizationEnabled, model.isTrusted, !model.floatingPaused, !ownFrontmost(), !model.isBusy, !model.isWriting,
+              let target = model.detectedTarget,
+              let next = FloatingHoverLayout.make(field: target.rect, screens: screens(), sceneCount: model.sceneConfiguration.scenes.count) else { hide(); return }
+        let targetChanged = lastTarget.map { !target.sameField(as: $0) } ?? true
+        if targetChanged || layout != next || lastScenes != model.sceneConfiguration.scenes {
+            collapseTask?.cancel(); hovered.removeAll(); isExpanded = false
+            scenePanel.orderOut(nil)
+            lastScenes = model.sceneConfiguration.scenes
+            sceneView.setScenes(lastScenes)
+            layout = next; buttonView.growsLeft = next.growsLeft
+            if let menu = next.menu { scenePanel.setFrame(menu, display: false); sceneView.layoutSubtreeIfNeeded() }
+            buttonView.setExpanded(false, animated: false)
+            buttonPanel.setFrame(next.collapsed, display: true)
+        }
+        lastTarget = target
+        if !buttonPanel.isVisible { buttonPanel.orderFrontRegardless() }
     }
 
-    private func setHover(_ value: Bool) -> Bool {
-        guard let rect = lastRect else { return false }
-        expanded = value && FloatingPlacement.origin(field: rect, visibleFrames: NSScreen.screens.map(\.visibleFrame), size: CGSize(width: 118, height: 32)) != nil
-        positionButton()
-        return expanded
+    func hoverChanged(_ surface: Surface, entered: Bool) {
+        guard buttonPanel.isVisible, layout != nil else { return }
+        if entered {
+            hovered.insert(surface); collapseTask?.cancel(); collapseTask = nil
+            // Start immediately from the tracking event; no delayed hover/AX work here.
+            setExpanded(true)
+        } else {
+            hovered.remove(surface)
+            guard hovered.isEmpty else { return }
+            collapseTask?.cancel()
+            collapseTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 170_000_000) } catch { return }
+                guard let self, self.hovered.isEmpty else { return }
+                self.setExpanded(false)
+            }
+        }
     }
 
-    private func positionButton() {
-        guard let rect = lastRect else { buttonPanel.orderOut(nil); return }
-        let size = CGSize(width: expanded ? 118 : 40, height: 32)
-        guard let origin = FloatingPlacement.origin(field: rect, visibleFrames: NSScreen.screens.map(\.visibleFrame), size: size) else { buttonPanel.orderOut(nil); return }
-        buttonPanel.setFrame(CGRect(origin: origin, size: size), display: true)
-        if !model.isBusy && !model.isWriting { buttonPanel.orderFrontRegardless() } else { buttonPanel.orderOut(nil) }
+    private func setExpanded(_ value: Bool) {
+        guard let layout, isExpanded != value else { return }
+        isExpanded = value
+        let animated = !reduceMotion()
+        buttonView.setExpanded(value, animated: animated)
+        let destination = value ? layout.expanded : layout.collapsed
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18; context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                buttonPanel.animator().setFrame(destination, display: true)
+            }
+        } else { buttonPanel.setFrame(destination, display: true) }
+        if value, let menu = layout.menu, !lastScenes.isEmpty {
+            scenePanel.setFrame(menu, display: true)
+            scenePanel.alphaValue = animated ? 0 : 1
+            scenePanel.orderFrontRegardless()
+            if animated {
+                NSAnimationContext.runAnimationGroup { context in context.duration = 0.12; scenePanel.animator().alphaValue = 1 }
+            }
+        } else { scenePanel.orderOut(nil) }
+    }
+
+    func hide() {
+        collapseTask?.cancel(); collapseTask = nil; hovered.removeAll()
+        isExpanded = false; layout = nil; lastTarget = nil
+        buttonView.setExpanded(false, animated: false)
+        buttonPanel.orderOut(nil); scenePanel.orderOut(nil)
     }
 
     func showNotice(_ message: String, canUndo: Bool) {
@@ -88,37 +150,6 @@ final class FloatingButtonController {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         return panel
-    }
-}
-
-private struct FloatingButtonView: View {
-    let action: () -> Void
-    let hover: (Bool) -> Bool
-    @State private var expanded = false
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
-                if expanded { Text("优化").font(.system(size: 13, weight: .medium)) }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-        }
-        .buttonStyle(FloatingStyle(hovered: expanded))
-        .onHover { expanded = hover($0) }
-        .help("优化 Prompt · ⌘ ⇧ E")
-        .accessibilityLabel("优化当前输入框的 Prompt")
-    }
-}
-
-private struct FloatingStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let hovered: Bool
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-            .background(configuration.isPressed ? Color.accentColor.opacity(0.3) : .clear, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(hovered ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.18)))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: configuration.isPressed)
     }
 }
 
