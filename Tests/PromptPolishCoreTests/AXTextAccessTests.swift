@@ -157,6 +157,40 @@ final class AXTextAccessTests {
         expectEqual(fixture.runtime.writes, 0)
     }
 
+    func testHostedFocusedFieldCanReplaceAndUndoWithoutApplicationFocusAttribute() async throws {
+        let fixture = Fixture()
+        fixture.runtime.frontmostPID = fixture.access.target.application.processIdentifier
+        fixture.runtime.put(kAXFocusedUIElementAttribute, nil, on: fixture.app)
+        fixture.runtime.put(kAXFocusedAttribute, kCFBooleanTrue, on: fixture.field)
+        let transaction = TextTransaction(access: fixture.access, original: "原始 Prompt 🧑‍💻")
+        try await transaction.replace(with: "优化结果")
+        expectEqual(try fixture.access.read(), "优化结果")
+        try await transaction.undo()
+        expectEqual(try fixture.access.read(), "原始 Prompt 🧑‍💻")
+    }
+
+    func testHostedFocusFallbackRequiresSameFocusedWindowAndPositiveFieldFocus() {
+        let fixture = Fixture()
+        fixture.runtime.frontmostPID = fixture.access.target.application.processIdentifier
+        fixture.runtime.put(kAXFocusedUIElementAttribute, nil, on: fixture.app)
+        fixture.runtime.put(kAXFocusedAttribute, kCFBooleanFalse, on: fixture.field)
+        expectThrows(try fixture.access.write("must not write"))
+        fixture.runtime.put(kAXFocusedAttribute, kCFBooleanTrue, on: fixture.field)
+        fixture.runtime.put(kAXFocusedWindowAttribute, nil, on: fixture.app)
+        expectThrows(try fixture.access.write("must not write"))
+        expectEqual(fixture.runtime.writes, 0)
+    }
+
+    func testExplicitNonTextFocusCannotUsePinnedFallback() {
+        let fixture = Fixture()
+        fixture.runtime.frontmostPID = fixture.access.target.application.processIdentifier
+        fixture.runtime.put(kAXFocusedUIElementAttribute, fixture.otherField, on: fixture.app)
+        fixture.runtime.put(kAXRoleAttribute, kAXButtonRole as CFString, on: fixture.otherField)
+        fixture.runtime.put(kAXFocusedAttribute, kCFBooleanTrue, on: fixture.field)
+        expectThrows(try fixture.access.write("must not write"))
+        expectEqual(fixture.runtime.writes, 0)
+    }
+
     func testUnrelatedForegroundApplicationBlocksWrite() {
         let fixture = Fixture()
         fixture.runtime.frontmostPID = 900_099

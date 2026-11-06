@@ -18,7 +18,7 @@ final class PassiveProbeTests {
     }
     func testPassiveProbeDoesNotBlockUIAndCoalescesNewestTarget() async {
         let probe = BlockingProbe()
-        let tracker = PassiveTargetTracker(probe: { probe.read($0) })
+        let tracker = PassiveTargetTracker(probe: { pid, _ in probe.read(pid) })
         var delivered: [pid_t] = []
         tracker.request(pid: 1) { if let result = $0 { delivered.append(result.pid) } }
         await eventually { probe.recorded == [1] }
@@ -32,7 +32,7 @@ final class PassiveProbeTests {
     }
     func testCancelledProbeCannotOverwriteFreshCapture() async {
         let probe = BlockingProbe()
-        let tracker = PassiveTargetTracker(probe: { probe.read($0) })
+        let tracker = PassiveTargetTracker(probe: { pid, _ in probe.read(pid) })
         var delivered: [pid_t] = []
         tracker.request(pid: 1) { if let result = $0 { delivered.append(result.pid) } }
         await eventually { probe.recorded == [1] }
@@ -42,6 +42,32 @@ final class PassiveProbeTests {
         await eventually { delivered == [4] }
         expectEqual(delivered, [4])
         expectEqual(probe.recorded, [1, 4])
+    }
+
+    func testCachedHandlesAreDiscardedOnForegroundChangeAndCapture() async {
+        final class Probe: @unchecked Sendable {
+            let lock = NSLock()
+            var preferred: [pid_t?] = []
+            func read(_ pid: pid_t, _ cached: PassiveAXTarget?) -> PassiveAXTarget? {
+                lock.lock(); preferred.append(cached?.pid); lock.unlock()
+                let element = AXUIElementCreateApplication(pid)
+                return PassiveAXTarget(pid: pid, element: element, window: element, canWrite: true, rawFrame: CGRect(x: 1, y: 2, width: 300, height: 100))
+            }
+            var recorded: [pid_t?] { lock.lock(); defer { lock.unlock() }; return preferred }
+        }
+        let probe = Probe()
+        let tracker = PassiveTargetTracker(probe: { probe.read($0, $1) })
+        var deliveries = 0
+        tracker.request(pid: 1) { _ in deliveries += 1 }
+        await eventually { deliveries == 1 }
+        tracker.request(pid: 1) { _ in deliveries += 1 }
+        await eventually { deliveries == 2 }
+        tracker.request(pid: 2) { _ in deliveries += 1 }
+        await eventually { deliveries == 3 }
+        tracker.cancel()
+        tracker.request(pid: 2) { _ in deliveries += 1 }
+        await eventually { deliveries == 4 }
+        expectEqual(probe.recorded, [nil, 1, nil, nil])
     }
     private func eventually(_ condition: () -> Bool) async {
         for _ in 0..<1000 {

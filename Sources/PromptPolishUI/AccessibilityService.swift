@@ -145,13 +145,21 @@ final class AXTextAccess: FocusableTextAccess {
 
         let app = AXUIElementCreateApplication(target.application.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.4)
-        if let focusedWindow = runtime.element(kAXFocusedWindowAttribute, of: app), !CFEqual(focusedWindow, target.window) {
+        let focusedWindow = runtime.element(kAXFocusedWindowAttribute, of: app)
+        if let focusedWindow, !CFEqual(focusedWindow, target.window) {
             throw AccessError.targetChanged(.otherWindow)
         }
-        if let focused = runtime.element(kAXFocusedUIElementAttribute, of: app), let field = runtime.textField(containing: focused) {
+        let focused = runtime.element(kAXFocusedUIElementAttribute, of: app)
+        if let focused, let field = runtime.textField(containing: focused) {
             guard CFEqual(field, target.element) else { throw AccessError.targetChanged(.otherField) }
         } else if front != runtime.ownPID {
-            throw AccessError.targetChanged(.focusUnavailable)
+            // Some hosted web editors expose focus only on the actual text element.
+            // Keep the captured identity; require both its positive focus and its
+            // exact currently focused window. Explicit non-text focus still blocks.
+            guard focused == nil, let focusedWindow, CFEqual(focusedWindow, target.window),
+                  runtime.attribute(kAXFocusedAttribute, of: target.element) as? Bool == true else {
+                throw AccessError.targetChanged(.focusUnavailable)
+            }
         }
         // Clicking our preview legitimately removes the source application's keyboard focus.
         // In that case the live, pinned field/window above provide identity; TextTransaction

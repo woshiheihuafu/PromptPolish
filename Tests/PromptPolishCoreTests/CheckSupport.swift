@@ -40,6 +40,7 @@ struct Checks {
         let scenes = SceneTests()
         let hover = FloatingHoverTests()
         let passive = PassiveProbeTests()
+        let focusedSearch = FocusedFieldSearchTests()
         let sync: [(String, () throws -> Void)] = [
             ("scene limit and required fields", scenes.testSceneLimitAndRequiredFields),
             ("scene settings persist and cancel", scenes.testSceneSettingsPersistAndCancelWithoutAPIChanges),
@@ -61,6 +62,17 @@ struct Checks {
             ("no room/offscreen hides button", placement.testNoRoomOrOffscreenHidesButton),
             ("secondary display", placement.testNegativeOriginSecondaryDisplay),
             ("original focused AX target reads", ax.testOriginalFocusedTargetCanBeRead),
+            ("deep hosted focus search never reads text", focusedSearch.testFindsFocusedTextInsideDeepHostedWindowWithoutReadingText),
+            ("hosted focus search rejects unfocused or ambiguous fields", focusedSearch.testRejectsUnfocusedAndAmbiguousFields),
+            ("hosted focus search rejects secure or foreign fields", focusedSearch.testRejectsSecureFieldsAndForeignWindowMembership),
+            ("incomplete hosted search never accepts early candidate", focusedSearch.testIncompleteSearchNeverReturnsEarlyCandidate),
+            ("hosted focus search handles cycles", focusedSearch.testCycleDoesNotHideUniqueFocusedField),
+            ("passive probe resolves missing app focus in hosted window", focusedSearch.testProbeFindsHostedFieldWhenApplicationAndSystemFocusAreMissing),
+            ("passive probe revalidates cached hosted focus", focusedSearch.testProbeRevalidatesCachedFocusWhenUserChangesInputs),
+            ("passive probe respects explicit non-text focus", focusedSearch.testProbeRespectsExplicitNonTextFocusEvenWithCachedTextField),
+            ("passive probe rejects foreign focused window", focusedSearch.testProbeRejectsForeignFocusedWindow),
+            ("hosted pinned focus needs matching window and field focus", ax.testHostedFocusFallbackRequiresSameFocusedWindowAndPositiveFieldFocus),
+            ("explicit non-text focus cannot use pinned fallback", ax.testExplicitNonTextFocusCannotUsePinnedFallback),
             ("AX focused window is optional", ax.testOptionalFocusedWindowIsNotRequiredWhenExactFieldIsKnown),
             ("AX rejects another focused field", ax.testOtherFocusedFieldIsNeverSubstituted),
             ("AX rejects another focused window", ax.testOtherWindowIsNeverAccepted),
@@ -83,10 +95,12 @@ struct Checks {
             count += 1
         }
         let asyncChecks: [(String, () async throws -> Void)] = [
+            ("hosted field replaces and undoes without app focus attribute", ax.testHostedFocusedFieldCanReplaceAndUndoWithoutApplicationFocusAttribute),
             ("scene prompt survives regeneration and resets for default", scenes.testSceneRequestRegenerationAndDefaultKeepCorrectPrompt),
             ("hover opens immediately and menu crossing retains it", hover.testHoverImmediatelyShowsConfiguredMenuAndCrossingKeepsItOpen),
             ("passive probe is nonblocking and coalesces newest target", passive.testPassiveProbeDoesNotBlockUIAndCoalescesNewestTarget),
             ("cancelled passive probe cannot overwrite capture", passive.testCancelledProbeCannotOverwriteFreshCapture),
+            ("passive cache resets across foreground changes and capture", passive.testCachedHandlesAreDiscardedOnForegroundChangeAndCapture),
             ("reenter during collapse keeps chooser expanded", hover.testReenterDuringCollapseAndPeriodicUpdateKeepMenuExpanded),
             ("latest-source scene persists and adding stops at five", scenes.testLatestSourceUsesSessionSceneAndAddStopsAtFive),
             ("replace/undo preserves Unicode and whitespace", transaction.testReplaceAndUndoPreserveOriginalExactly),
